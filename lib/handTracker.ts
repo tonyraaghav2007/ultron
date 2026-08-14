@@ -141,7 +141,7 @@ export class HandTracker {
   stop(): void {
     if (this.mousePollInterval) clearInterval(this.mousePollInterval);
     this.running = false;
-    cancelAnimationFrame(this.rafId);
+    window.clearTimeout(this.rafId);
     this.landmarker?.close();
     this.landmarker = null;
     this.stream?.getTracks().forEach((t) => t.stop());
@@ -158,7 +158,7 @@ export class HandTracker {
 
   private loop = () => {
     if (!this.running) return;
-    this.rafId = requestAnimationFrame(this.loop);
+    this.rafId = window.setTimeout(this.loop, 16);
 
     if (!this.landmarker || this.video.readyState < 2) return;
     if (this.video.currentTime === this.lastVideoTime) return;
@@ -181,8 +181,12 @@ export class HandTracker {
       const handScale = dist2d(lm[WRIST], lm[MIDDLE_MCP]);
       const isPinched = handScale > 1e-6 && dist2d(thumb, index) / handScale < PINCH_ON;
       
-      const nx = 1 - index.x; // Mirrored X
-      const ny = index.y;
+      const rawNx = 1 - index.x; // Mirrored X
+      const rawNy = index.y;
+      
+      const SENSITIVITY = 2.5; // 2.5x faster movement
+      const nx = Math.max(0, Math.min(1, (rawNx - 0.5) * SENSITIVITY + 0.5));
+      const ny = Math.max(0, Math.min(1, (rawNy - 0.5) * SENSITIVITY + 0.5));
 
       let action = "move";
       const now = performance.now();
