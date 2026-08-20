@@ -20,8 +20,21 @@ export function startDaemon() {
   if (daemonProcess) return;
 
   const scriptPath = path.join(process.cwd(), "mouse_daemon.py");
+  
+  // Use a log file so we can debug why it crashes
+  const fs = require('fs');
+  const out = fs.openSync(path.join(process.cwd(), 'daemon_out.log'), 'a');
+  const err = fs.openSync(path.join(process.cwd(), 'daemon_err.log'), 'a');
+
+  // Kill orphaned instances to free port 5005 & 5006 (Windows)
+  try {
+      require('child_process').execSync('taskkill /F /IM python.exe /T', { stdio: 'ignore' });
+  } catch (e) {
+      // Ignored if no python process found
+  }
+
   daemonProcess = spawn("python", [scriptPath], {
-    stdio: "inherit",
+    stdio: ['ignore', out, err],
     windowsHide: true,
   });
 
@@ -31,14 +44,37 @@ export function startDaemon() {
 }
 
 export function sendMouseCommand(payload: any) {
-  if (!globalMouseModeEnabled) return;
-  
-  if (!daemonProcess) {
-    startDaemon();
+  if (!globalMouseModeEnabled) {
+      // In agent mode we might not have globalMouseModeEnabled to true by default
+      // but we still want to send commands. So let's ensure daemon is running.
+      if (!daemonProcess) startDaemon();
+  } else {
+      if (!daemonProcess) startDaemon();
   }
-
+  
   const message = Buffer.from(JSON.stringify(payload));
   udpClient.send(message, UDP_PORT, "127.0.0.1", (err) => {
     if (err) console.error("UDP send error:", err);
   });
+}
+
+// Helper methods for Agent
+export function agentClick() {
+  sendMouseCommand({ action: "click" });
+}
+
+export function agentDoubleClick() {
+  sendMouseCommand({ action: "double_click" });
+}
+
+export function agentType(text: string) {
+  sendMouseCommand({ action: "type", text });
+}
+
+export function agentKey(key: string) {
+  sendMouseCommand({ action: "key", key });
+}
+
+export function agentMove(x: number, y: number) {
+  sendMouseCommand({ action: "move", x, y });
 }

@@ -88,6 +88,8 @@ export class HandTracker {
   private isMouseDragging = false;
   private mousePollInterval: any = null;
   private mouseFetchPending = false;
+  private smoothedMouseX?: number;
+  private smoothedMouseY?: number;
 
   constructor(
     video: HTMLVideoElement,
@@ -107,6 +109,23 @@ export class HandTracker {
         this.isMouseMode = data.enabled;
       } catch {}
     }, 2000);
+
+    // Create a Web Worker to act as a high-frequency background timer
+    // since browsers severely throttle setTimeout/setInterval in background tabs.
+    const workerCode = `
+      let timer = null;
+      self.onmessage = function(e) {
+        if (e.data === 'start') {
+          // Throttle to ~30 FPS to prevent main thread WebGL frame drops
+          timer = setInterval(() => self.postMessage('tick'), 33);
+        } else if (e.data === 'stop') {
+          clearInterval(timer);
+        }
+      };
+    `;
+    const blob = new Blob([workerCode], { type: "application/javascript" });
+    this.worker = new Worker(URL.createObjectURL(blob));
+    this.worker.onmessage = () => this.loop();
 
     this.stream = await navigator.mediaDevices.getUserMedia({
       video: { width: 640, height: 480, facingMode: "user" },
@@ -135,13 +154,21 @@ export class HandTracker {
     }
 
     this.running = true;
-    this.loop();
+    this.worker.postMessage('start');
   }
+
+  private worker: Worker | null = null;
 
   stop(): void {
     if (this.mousePollInterval) clearInterval(this.mousePollInterval);
     this.running = false;
-    window.clearTimeout(this.rafId);
+    
+    if (this.worker) {
+      this.worker.postMessage("stop");
+      this.worker.terminate();
+      this.worker = null;
+    }
+    
     this.landmarker?.close();
     this.landmarker = null;
     this.stream?.getTracks().forEach((t) => t.stop());
@@ -157,16 +184,16 @@ export class HandTracker {
   }
 
   private loop = () => {
-    if (!this.running) return;
-    this.rafId = window.setTimeout(this.loop, 16);
-
-    if (!this.landmarker || this.video.readyState < 2) return;
-    if (this.video.currentTime === this.lastVideoTime) return;
-    this.lastVideoTime = this.video.currentTime;
-
-    const result = this.landmarker.detectForVideo(this.video, performance.now());
-    this.processHands(result.landmarks, result.handedness.map((h) => h[0]?.categoryName ?? "?"));
-    this.drawOverlay(result.landmarks);
+    if (!this.running || !this.landmarker || this.video.readyState < 2) return;
+    
+    try {
+      const result = this.landmarker.detectForVideo(this.video, performance.now());
+      this.processHands(result.landmarks, result.handedness.map((h) => h[0]?.categoryName ?? "?"));
+      this.drawOverlay(result.landmarks);
+    } catch (e) {
+      // MediaPipe might throw if the video timestamp hasn't advanced in a background tab.
+      // We can just ignore it until the next tick.
+    }
   };
 
   private processHands(
@@ -185,18 +212,28 @@ export class HandTracker {
       const rawNy = index.y;
       
       const SENSITIVITY = 2.5; // 2.5x faster movement
-      const nx = Math.max(0, Math.min(1, (rawNx - 0.5) * SENSITIVITY + 0.5));
-      const ny = Math.max(0, Math.min(1, (rawNy - 0.5) * SENSITIVITY + 0.5));
+      const targetNx = Math.max(0, Math.min(1, (rawNx - 0.5) * SENSITIVITY + 0.5));
+      const targetNy = Math.max(0, Math.min(1, (rawNy - 0.5) * SENSITIVITY + 0.5));
+      
+      // Apply smoothing to reduce jitter
+      const MOUSE_SMOOTHING = 0.25;
+      // Initialize smoothed position if first time
+      if (this.smoothedMouseX === undefined || this.smoothedMouseY === undefined) {
+         this.smoothedMouseX = targetNx;
+         this.smoothedMouseY = targetNy;
+      } else {
+         this.smoothedMouseX = this.smoothedMouseX! + (targetNx - this.smoothedMouseX!) * MOUSE_SMOOTHING;
+         this.smoothedMouseY = this.smoothedMouseY! + (targetNy - this.smoothedMouseY!) * MOUSE_SMOOTHING;
+      }
+      
+      const nx = this.smoothedMouseX;
+      const ny = this.smoothedMouseY;
 
       let action = "move";
       const now = performance.now();
 
       if (isPinched && !this.isMouseDragging) {
-        if (now - this.lastMousePinchEnd < 300) {
-          action = "right_click";
-        } else {
-          action = "drag_start";
-        }
+        action = "drag_start"; // A quick pinch & release will act as a click
         this.isMouseDragging = true;
       } else if (!isPinched && this.isMouseDragging) {
         action = "drag_end";
@@ -217,6 +254,10 @@ export class HandTracker {
       
       // Stop orb interaction in mouse mode
       return;
+    } else if (this.isMouseMode && landmarks.length === 0) {
+      // Hand lost in mouse mode, reset smoothing
+      this.smoothedMouseX = undefined;
+      this.smoothedMouseY = undefined;
     }
 
     const pinchedGrabs: Point[] = [];

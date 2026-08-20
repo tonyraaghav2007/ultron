@@ -23,6 +23,10 @@ export interface OrbSceneApi {
   toggleBloom(): void;
   /** Enter dormant mode — grey, no glow, no color. */
   setDormant(dormant: boolean): void;
+  /** Trigger a fast, aggressive processing animation. */
+  setProcessing(processing: boolean): void;
+  /** Throttles rendering and disables post-processing to save resources. */
+  setLowPowerMode(lowPower: boolean): void;
   dispose(): void;
 }
 
@@ -465,21 +469,19 @@ export function createOrbScene(container: HTMLElement): OrbSceneApi {
     };
   }
 
-  function renderSpriteText(sprite: THREE.Sprite, text: string, alpha: number, hueShift: number) {
+  function renderSpriteText(sprite: THREE.Sprite, text: string, alpha: number) {
     const canvas = document.createElement("canvas");
     canvas.width = 256;
     canvas.height = 32;
     const ctx = canvas.getContext("2d")!;
     ctx.font = "bold 14px Courier New";
-    const rgb = hueToTextRGB(hueShift);
-    // Add slight random variation around the hue-shifted color
-    const rr = Math.min(255, rgb.r + ((Math.random() * 30 - 15) | 0));
-    const gg = Math.min(255, rgb.g + ((Math.random() * 30 - 15) | 0));
-    const bb = Math.min(255, rgb.b + ((Math.random() * 20 - 10) | 0));
-    ctx.fillStyle = `rgba(${rr}, ${gg}, ${bb}, ${alpha})`;
+    
+    // Draw text in pure white with alpha! The SpriteMaterial.color will tint it.
+    ctx.fillStyle = `rgba(255, 255, 255, ${alpha})`;
     ctx.textAlign = "center";
     ctx.textBaseline = "middle";
     ctx.fillText(text, 128, 16);
+    
     const oldMat = sprite.material as THREE.SpriteMaterial;
     if (oldMat.map) oldMat.map.dispose();
     oldMat.map = new THREE.CanvasTexture(canvas);
@@ -494,22 +496,28 @@ export function createOrbScene(container: HTMLElement): OrbSceneApi {
     const ctx = c.getContext("2d")!;
     ctx.font = "bold 14px Courier New";
     const alpha = 0.35 + Math.random() * 0.55;
-    ctx.fillStyle = `rgba(255, ${(130 + Math.random() * 80) | 0}, ${(20 + Math.random() * 30) | 0}, ${alpha})`;
+    
+    // Draw text in pure white!
+    ctx.fillStyle = `rgba(255, 255, 255, ${alpha})`;
     ctx.textAlign = "center";
     ctx.textBaseline = "middle";
     ctx.fillText(text, 128, 16);
+    
     const tex = new THREE.CanvasTexture(c);
     tex.minFilter = THREE.LinearFilter;
+    
     const s = new THREE.Sprite(
       new THREE.SpriteMaterial({
         map: tex,
+        color: C_BRIGHT, // Assign the base amber color here!
         transparent: true,
         blending: THREE.AdditiveBlending,
         depthWrite: false,
       }),
     );
     s.scale.set(size * 5, size * 0.7, 1);
-    // Store text and alpha for re-coloring
+    
+    // Store text and alpha for system stats updates
     s.userData.text = text;
     s.userData.alpha = alpha;
     allTextSprites.push(s);
@@ -778,14 +786,13 @@ export function createOrbScene(container: HTMLElement): OrbSceneApi {
     // Replace a rotating subset of outer text sprites with live data
     const sprites = textOuter.children;
     const count = Math.min(snippets.length * 8, sprites.length);
-    const currentShift = HUE_SHIFTS[colorTheme];
     for (let i = 0; i < count; i++) {
       const sp = sprites[i] as THREE.Sprite;
       const text = snippets[i % snippets.length];
       const alpha = 0.7 + Math.random() * 0.3;
       sp.userData.text = text;
       sp.userData.alpha = alpha;
-      renderSpriteText(sp, text, alpha, currentShift);
+      renderSpriteText(sp, text, alpha);
     }
   }
 
@@ -797,10 +804,17 @@ export function createOrbScene(container: HTMLElement): OrbSceneApi {
   let rafId = 0;
   let disposed = false;
   let isDormant = false;
+  let isProcessing = false;
+  let lowPower = false;
+  let lastFrameTime = 0;
 
-  function animate() {
+  function animate(now = performance.now()) {
     if (disposed) return;
     rafId = requestAnimationFrame(animate);
+
+    if (lowPower && now - lastFrameTime < 33) return; // throttle to ~30fps
+    lastFrameTime = now;
+
     const t = clock.getElapsedTime();
 
     // Audio-reactive multipliers (default to 1 when no audio)
@@ -811,25 +825,25 @@ export function createOrbScene(container: HTMLElement): OrbSceneApi {
     const hasAudio = aOverall > 0.001;
 
     // Outer shell rotation — mid frequencies speed it up
-    outerShell.rotation.y += 0.0015 * (1 + aMid * 3);
-    outerShell.rotation.x = Math.sin(t * 0.08) * (0.05 + aMid * 0.15);
+    outerShell.rotation.y += (isProcessing ? 0.05 : 0.0015) * (1 + aMid * 3);
+    outerShell.rotation.x = Math.sin(t * 0.08) * (0.05 + aMid * 0.15) + (isProcessing ? Math.sin(t * 10) * 0.05 : 0);
 
     // Panel group follows shell but with slight offset
-    panelGroup.rotation.y += 0.0018;
-    panelGroup.rotation.x = Math.sin(t * 0.08 + 0.5) * 0.04;
+    panelGroup.rotation.y += (isProcessing ? 0.06 : 0.0018);
+    panelGroup.rotation.x = Math.sin(t * 0.08 + 0.5) * 0.04 + (isProcessing ? Math.cos(t * 8) * 0.05 : 0);
 
     // Secondary shell counter-rotates slowly
-    shell2.rotation.y -= 0.001;
-    shell2.rotation.z = Math.sin(t * 0.12) * 0.03;
+    shell2.rotation.y -= (isProcessing ? 0.04 : 0.001);
+    shell2.rotation.z = Math.sin(t * 0.12) * 0.03 + (isProcessing ? Math.sin(t * 12) * 0.05 : 0);
 
     // Inner core — treble drives speed
-    innerCore.rotation.y -= 0.005 * (1 + aTreble * 5);
-    innerCore.rotation.z += 0.002 * (1 + aTreble * 3);
+    innerCore.rotation.y -= (isProcessing ? 0.08 : 0.005) * (1 + aTreble * 5);
+    innerCore.rotation.z += (isProcessing ? 0.04 : 0.002) * (1 + aTreble * 3);
     innerCore.rotation.x = Math.cos(t * 0.1) * (0.08 + aTreble * 0.2);
 
     // Innermost wireframe
-    icoWire.rotation.x += 0.008;
-    icoWire.rotation.y += 0.012;
+    icoWire.rotation.x += (isProcessing ? 0.1 : 0.008);
+    icoWire.rotation.y += (isProcessing ? 0.15 : 0.012);
 
     // Core pulse — bass drives it when audio is active, sine waves as baseline
     const wave1 = Math.sin(t * 1.2);
@@ -839,14 +853,15 @@ export function createOrbScene(container: HTMLElement): OrbSceneApi {
     const baseSurge = wave3 * 1.5 + wave4 * 2.0;
     // Audio bass adds massive energy to the core
     const audioSurge = hasAudio ? aBass * 4.0 : 0;
-    const surge = baseSurge + audioSurge;
-    const coreScale = 1 + surge + Math.sin(t * 5) * 0.05;
+    const processSurge = isProcessing ? (0.5 + Math.sin(t * 20) * 0.5) : 0;
+    const surge = baseSurge + audioSurge + processSurge;
+    const coreScale = 1 + surge + Math.sin(t * 5) * 0.05 + (isProcessing ? 0.2 : 0);
     coreSphere.scale.setScalar(coreScale);
     if (!isDormant) {
       const coreOpacity = Math.max(
         0,
         (0.08 + wave1 * 0.05 + surge * 0.2) * (1 - fadeOut * (hasAudio ? 0.3 : 0.95)),
-      );
+      ) + (isProcessing ? 0.4 : 0);
       coreSphereMat.opacity = Math.min(0.8, coreOpacity);
       glowSphere.scale.setScalar(1 + surge * 0.8);
       glowSphereMat.opacity = Math.max(0, (0.03 + surge * 0.12) * (1 - fadeOut * (hasAudio ? 0.3 : 0.9)));
@@ -978,29 +993,28 @@ export function createOrbScene(container: HTMLElement): OrbSceneApi {
     }
   });
 
-  const HUE_SHIFTS = [0, 0.45, 0.9, 0.7, 0.25]; // Amber, Cyan, Crimson, Purple, Emerald
+  const HUE_SHIFTS = [0.47, 0]; // Jarvis Blue, Ultron Orange
   let colorTheme = 0;
 
-  function cycleColor() {
-    colorTheme = (colorTheme + 1) % HUE_SHIFTS.length;
+  function applyCurrentTheme() {
     const shift = HUE_SHIFTS[colorTheme];
-
-    // Shift all material colors
+    const shiftDeg = (0.07 + shift) * 360;
+    document.documentElement.style.setProperty("--theme-h", shiftDeg.toString());
+    
     colorableMaterials.forEach(({ mat, baseColor }) => {
       const hsl = { h: 0, s: 0, l: 0 };
       baseColor.getHSL(hsl);
       hsl.h = (hsl.h + shift) % 1.0;
       mat.color.setHSL(hsl.h, hsl.s, hsl.l);
     });
+  }
 
-    // Re-render all text sprite canvases with the new hue
-    for (const sprite of allTextSprites) {
-      const text = sprite.userData.text as string;
-      const alpha = sprite.userData.alpha as number;
-      if (text) {
-        renderSpriteText(sprite, text, alpha, shift);
-      }
-    }
+  // Force the default Jarvis theme on startup
+  applyCurrentTheme();
+
+  function cycleColor() {
+    colorTheme = (colorTheme + 1) % HUE_SHIFTS.length;
+    applyCurrentTheme();
   }
 
   let isBloomEnabled = true;
@@ -1018,36 +1032,13 @@ export function createOrbScene(container: HTMLElement): OrbSceneApi {
     isDormant = dormant;
 
     if (dormant) {
-      // Desaturate all materials to grey
+      // Desaturate all materials to grey (including text SpriteMaterials)
       colorableMaterials.forEach(({ mat }) => {
         const hsl = { h: 0, s: 0, l: 0 };
         mat.color.getHSL(hsl);
         // Map brightness to a grey tone
         mat.color.setHSL(0, 0, Math.max(0.08, hsl.l * 0.5));
       });
-
-      // Grey out all text sprites
-      for (const sprite of allTextSprites) {
-        const text = sprite.userData.text as string;
-        const alpha = sprite.userData.alpha as number;
-        if (text) {
-          const canvas = document.createElement("canvas");
-          canvas.width = 256;
-          canvas.height = 32;
-          const ctx = canvas.getContext("2d")!;
-          ctx.font = "bold 14px Courier New";
-          const grey = 80 + Math.random() * 40;
-          ctx.fillStyle = `rgba(${grey}, ${grey}, ${grey}, ${alpha * 0.4})`;
-          ctx.textAlign = "center";
-          ctx.textBaseline = "middle";
-          ctx.fillText(text, 128, 16);
-          const oldMat = sprite.material as THREE.SpriteMaterial;
-          if (oldMat.map) oldMat.map.dispose();
-          oldMat.map = new THREE.CanvasTexture(canvas);
-          oldMat.map.minFilter = THREE.LinearFilter;
-          oldMat.needsUpdate = true;
-        }
-      }
 
       // Kill bloom and core glow
       bloom.strength = 0;
@@ -1062,22 +1053,7 @@ export function createOrbScene(container: HTMLElement): OrbSceneApi {
       chromaticPass.uniforms.uIntensity.value = 0;
     } else {
       // Restore colors from current theme
-      const shift = HUE_SHIFTS[colorTheme];
-      colorableMaterials.forEach(({ mat, baseColor }) => {
-        const hsl = { h: 0, s: 0, l: 0 };
-        baseColor.getHSL(hsl);
-        hsl.h = (hsl.h + shift) % 1.0;
-        mat.color.setHSL(hsl.h, hsl.s, hsl.l);
-      });
-
-      // Re-color text sprites
-      for (const sprite of allTextSprites) {
-        const text = sprite.userData.text as string;
-        const alpha = sprite.userData.alpha as number;
-        if (text) {
-          renderSpriteText(sprite, text, alpha, shift);
-        }
-      }
+      applyCurrentTheme();
 
       // Restore bloom and effects
       bloom.strength = isBloomEnabled ? 1.0 : 0.0;
@@ -1096,6 +1072,15 @@ export function createOrbScene(container: HTMLElement): OrbSceneApi {
     cycleColor,
     toggleBloom,
     setDormant,
+    setProcessing: (processing: boolean) => {
+      isProcessing = processing;
+    },
+    setLowPowerMode: (state: boolean) => {
+      lowPower = state;
+      bloom.enabled = !state;
+      chromaticPass.enabled = !state;
+      renderer.setPixelRatio(state ? 1 : Math.min(window.devicePixelRatio, 2));
+    },
     dispose,
   };
 }

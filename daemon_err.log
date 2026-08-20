@@ -1,0 +1,81 @@
+Exception in thread Thread-1 (udp_server):
+Traceback (most recent call last):
+  File "C:\Users\legion-5pro\AppData\Local\Programs\Python\Python311\Lib\threading.py", line 1045, in _bootstrap_inner
+    self.run()
+  File "C:\Users\legion-5pro\AppData\Local\Programs\Python\Python311\Lib\threading.py", line 982, in run
+    self._target(*self._args, **self._kwargs)
+  File "C:\Users\legion-5pro\Documents\Ultron Main\mouse_daemon.py", line 72, in udp_server
+    sock.bind((UDP_IP, UDP_PORT))
+OSError: [WinError 10048] Only one usage of each socket address (protocol/network address/port) is normally permitted
+Exception in thread Thread-1 (udp_server):
+Traceback (most recent call last):
+  File "C:\Users\legion-5pro\AppData\Local\Programs\Python\Python311\Lib\threading.py", line 1045, in _bootstrap_inner
+    self.run()
+  File "C:\Users\legion-5pro\AppData\Local\Programs\Python\Python311\Lib\threading.py", line 982, in run
+    self._target(*self._args, **self._kwargs)
+  File "C:\Users\legion-5pro\Documents\Ultron Main\mouse_daemon.py", line 72, in udp_server
+    sock.bind((UDP_IP, UDP_PORT))
+OSError: [WinError 10048] Only one usage of each socket address (protocol/network address/port) is normally permitted
+Exception in thread Thread-1 (udp_server):
+Traceback (most recent call last):
+  File "C:\Users\legion-5pro\AppData\Local\Programs\Python\Python311\Lib\threading.py", line 1045, in _bootstrap_inner
+    self.run()
+  File "C:\Users\legion-5pro\AppData\Local\Programs\Python\Python311\Lib\threading.py", line 982, in run
+    self._target(*self._args, **self._kwargs)
+  File "C:\Users\legion-5pro\Documents\Ultron Main\mouse_daemon.py", line 72, in udp_server
+    sock.bind((UDP_IP, UDP_PORT))
+OSError: [WinError 10048] Only one usage of each socket address (protocol/network address/port) is normally permitted
+Exception in thread Thread-1 (udp_server):
+Traceback (most recent call last):
+  File "C:\Users\legion-5pro\AppData\Local\Programs\Python\Python311\Lib\threading.py", line 1045, in _bootstrap_inner
+    self.run()
+  File "C:\Users\legion-5pro\AppData\Local\Programs\Python\Python311\Lib\threading.py", line 982, in run
+    self._target(*self._args, **self._kwargs)
+  File "C:\Users\legion-5pro\Documents\Ultron Main\mouse_daemon.py", line 72, in udp_server
+    sock.bind((UDP_IP, UDP_PORT))
+OSError: [WinError 10048] Only one usage of each socket address (protocol/network address/port) is normally permitted
+Exception in thread Thread-1 (udp_server):
+Traceback (most recent call last):
+  File "C:\Users\legion-5pro\AppData\Local\Programs\Python\Python311\Lib\threading.py", line 1045, in _bootstrap_inner
+    self.run()
+  File "C:\Users\legion-5pro\AppData\Local\Programs\Python\Python311\Lib\threading.py", line 982, in run
+    self._target(*self._args, **self._kwargs)
+  File "C:\Users\legion-5pro\Documents\Ultron Main\mouse_daemon.py", line 72, in udp_server
+    sock.bind((UDP_IP, UDP_PORT))
+OSError: [WinError 10048] Only one usage of each socket address (protocol/network address/port) is normally permitted
+Exception in thread Thread-1 (udp_server):
+Traceback (most recent call last):
+  File "C:\Users\legion-5pro\AppData\Local\Programs\Python\Python311\Lib\threading.py", line 1045, in _bootstrap_inner
+    self.run()
+  File "C:\Users\legion-5pro\AppData\Local\Programs\Python\Python311\Lib\threading.py", line 982, in run
+    self._target(*self._args, **self._kwargs)
+  File "C:\Users\legion-5pro\Documents\Ultron Main\mouse_daemon.py", line 72, in udp_server
+    sock.bind((UDP_IP, UDP_PORT))
+OSError: [WinError 10048] Only one usage of each socket address (protocol/network address/port) is normally permitted
+Exception in thread Thread-1 (udp_server):
+Traceback (most recent call last):
+  File "C:\Users\legion-5pro\AppData\Local\Programs\Python\Python311\Lib\threading.py", line 1045, in _bootstrap_inner
+    self.run()
+  File "C:\Users\legion-5pro\AppData\Local\Programs\Python\Python311\Lib\threading.py", line 982, in run
+    self._target(*self._args, **self._kwargs)
+  File "C:\Users\legion-5pro\Documents\Ultron Main\mouse_daemon.py", line 72, in udp_server
+    sock.bind((UDP_IP, UDP_PORT))
+OSError: [WinError 10048] Only one usage of each socket address (protocol/network address/port) is normally permitted
+Exception in thread Thread-1 (udp_server):
+Traceback (most recent call last):
+  File "C:\Users\legion-5pro\AppData\Local\Programs\Python\Python311\Lib\threading.py", line 1045, in _bootstrap_inner
+    self.run()
+  File "C:\Users\legion-5pro\AppData\Local\Programs\Python\Python311\Lib\threading.py", line 982, in run
+    self._target(*self._args, **self._kwargs)
+  File "C:\Users\legion-5pro\Documents\Ultron Main\mouse_daemon.py", line 72, in udp_server
+    sock.bind((UDP_IP, UDP_PORT))
+OSError: [WinError 10048] Only one usage of each socket address (protocol/network address/port) is normally permitted
+Exception in thread Thread-1 (udp_server):
+Traceback (most recent call last):
+  File "C:\Users\legion-5pro\AppData\Local\Programs\Python\Python311\Lib\threading.py", line 1045, in _bootstrap_inner
+    self.run()
+  File "C:\Users\legion-5pro\AppData\Local\Programs\Python\Python311\Lib\threading.py", line 982, in run
+    self._target(*self._args, **self._kwargs)
+  File "C:\Users\legion-5pro\Documents\Ultron Main\mouse_daemon.py", line 72, in udp_server
+    sock.bind((UDP_IP, UDP_PORT))
+OSError: [WinError 10048] Only one usage of each socket address (protocol/network address/port) is normally permitted

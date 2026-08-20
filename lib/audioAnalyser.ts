@@ -2,8 +2,10 @@
  * AudioAnalyser — captures microphone input via the Web Audio API and
  * provides real-time frequency-band energy levels (bass / mid / treble).
  *
- * Runs entirely in the browser — no backend required.
+ * Uses the shared mic stream so it doesn't conflict with voice recognition.
  */
+
+import { acquireMic, releaseMic } from "@/lib/micManager";
 
 export interface AudioLevels {
   /** Low frequencies 0–300 Hz (kick drums, bass) */
@@ -20,7 +22,7 @@ export class AudioAnalyser {
   private ctx: AudioContext | null = null;
   private analyser: AnalyserNode | null = null;
   private source: MediaStreamAudioSourceNode | null = null;
-  private stream: MediaStream | null = null;
+  private ownsMic = false;
   private freqData: Uint8Array = new Uint8Array(0);
   private _running = false;
 
@@ -38,21 +40,19 @@ export class AudioAnalyser {
   }
 
   async start(): Promise<void> {
-    this.stream = await navigator.mediaDevices.getUserMedia({
-      audio: {
-        echoCancellation: false,
-        noiseSuppression: false,
-        autoGainControl: false,
-      },
-      video: false,
-    });
+    const stream = await acquireMic();
+    this.ownsMic = true;
 
     this.ctx = new AudioContext();
+    if (this.ctx.state === "suspended") {
+      await this.ctx.resume();
+    }
+
     this.analyser = this.ctx.createAnalyser();
-    this.analyser.fftSize = 256; // 128 frequency bins
+    this.analyser.fftSize = 256;
     this.analyser.smoothingTimeConstant = 0.6;
 
-    this.source = this.ctx.createMediaStreamSource(this.stream);
+    this.source = this.ctx.createMediaStreamSource(stream);
     this.source.connect(this.analyser);
 
     this.freqData = new Uint8Array(this.analyser.frequencyBinCount);
@@ -63,11 +63,14 @@ export class AudioAnalyser {
     this._running = false;
     this.source?.disconnect();
     this.source = null;
-    this.stream?.getTracks().forEach((t) => t.stop());
-    this.stream = null;
     void this.ctx?.close();
     this.ctx = null;
     this.analyser = null;
+
+    if (this.ownsMic) {
+      releaseMic();
+      this.ownsMic = false;
+    }
 
     this.smoothBass = 0;
     this.smoothMid = 0;
@@ -84,27 +87,23 @@ export class AudioAnalyser {
       return { bass: 0, mid: 0, treble: 0, overall: 0 };
     }
 
-    this.analyser.getByteFrequencyData(this.freqData);
-    const bins = this.freqData.length; // 128
+    this.analyser.getByteFrequencyData(this.freqData as Uint8Array<ArrayBuffer>);
+    const bins = this.freqData.length;
     const sampleRate = this.ctx!.sampleRate;
-    const binHz = sampleRate / (this.analyser.fftSize); // Hz per bin
+    const binHz = sampleRate / this.analyser.fftSize;
 
-    // Calculate bin boundaries
     const bassCutoff = Math.min(Math.floor(300 / binHz), bins);
     const midCutoff = Math.min(Math.floor(2000 / binHz), bins);
 
-    // Average energy per band (0–255 → 0–1)
-    const bassRaw = avgRange(this.freqData, 1, bassCutoff); // skip bin 0 (DC offset)
+    const bassRaw = avgRange(this.freqData, 1, bassCutoff);
     const midRaw = avgRange(this.freqData, bassCutoff, midCutoff);
     const trebleRaw = avgRange(this.freqData, midCutoff, bins);
 
-    // Weight: bass is usually loudest, treble weakest — boost treble for visual balance
     const bass = bassRaw;
     const mid = Math.min(1, midRaw * 1.2);
     const treble = Math.min(1, trebleRaw * 1.8);
     const overall = bass * 0.5 + mid * 0.3 + treble * 0.2;
 
-    // Apply exponential smoothing
     this.smoothBass += (bass - this.smoothBass) * this.SMOOTH;
     this.smoothMid += (mid - this.smoothMid) * this.SMOOTH;
     this.smoothTreble += (treble - this.smoothTreble) * this.SMOOTH;

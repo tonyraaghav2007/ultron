@@ -1,0 +1,28 @@
+{
+  "lifts": [
+    {
+      "exercise": "bench press",
+      "weight": "100kg",
+      "reps": "3",
+      "date": "2026-08-18T10:31:54.549Z"
+    },
+    {
+      "exercise": "Goblet Squat",
+      "weight": "30kg",
+      "reps": "20",
+      "date": "2026-08-19T10:10:54.847Z"
+    },
+    {
+      "exercise": "Goblet Squat",
+      "weight": "35kg",
+      "reps": "35",
+      "date": "2026-08-19T10:10:56.623Z"
+    }
+  ],
+  "bodyweight": [
+    {
+      "weight": "64.34kg",
+      "date": "2026-08-18T14:02:20.137Z"
+    }
+  ]
+}

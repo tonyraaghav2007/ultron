@@ -73,6 +73,15 @@ export async function GET() {
         cpu: cpuTemp.main || 0,
         gpu: gpuTemp,
       },
+      gpu: {
+        model: graphics.controllers.length > 0 ? graphics.controllers[0].model.replace("NVIDIA GeForce ", "") : "N/A",
+        usage: graphics.controllers.length > 0 ? graphics.controllers[0].utilizationGpu || 0 : 0,
+        memory: {
+          total: graphics.controllers.length > 0 ? graphics.controllers[0].memoryTotal || 1 : 1,
+          used: graphics.controllers.length > 0 ? graphics.controllers[0].memoryUsed || 0 : 0,
+        },
+        power: graphics.controllers.length > 0 ? graphics.controllers[0].powerDraw || 0 : 0,
+      },
       uptime: uptimeSec,
       platform: os.platform(),
       hostname: os.hostname(),
