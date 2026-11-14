@@ -5,6 +5,7 @@ import { createOrbScene, type OrbSceneApi } from "@/lib/orbScene";
 import { HandTracker, type TrackerStatus } from "@/lib/handTracker";
 import { AudioAnalyser, type AudioLevels } from "@/lib/audioAnalyser";
 import { VoiceEngine, type VoiceState } from "@/lib/voiceEngine";
+import { ObjectScanner, type ScanState, type ScanResult } from "@/lib/objectScanner";
 import dynamic from "next/dynamic";
 
 const MapWidget = dynamic(() => import('./MapWidget'), { ssr: false });
@@ -62,6 +63,7 @@ export default function JarvisOrb() {
   const audioRafRef = useRef<number>(0);
   const systemIntervalRef = useRef<ReturnType<typeof setInterval> | null>(null);
   const voiceRef = useRef<VoiceEngine | null>(null);
+  const scannerRef = useRef<ObjectScanner | null>(null);
   const systemActiveRef = useRef(false);
   const chatEndRef = useRef<HTMLDivElement>(null);
 
@@ -115,6 +117,10 @@ export default function JarvisOrb() {
   const [newsExpandedIndex, setNewsExpandedIndex] = useState<number | null>(null);
 
   const [browserTarget, setBrowserTarget] = useState<string | null>(null);
+
+  // Object scanner state
+  const [scanState, setScanState] = useState<ScanState>("idle");
+  const [scanResult, setScanResult] = useState<ScanResult | null>(null);
 
   // Throttle orb scene performance when a widget (map/pdf/news/browser) is active
   useEffect(() => {
@@ -263,6 +269,62 @@ export default function JarvisOrb() {
     }
   }, [agentGoal]);
 
+  // ——— Object Scanner ———
+  const triggerScan = useCallback(async (customPrompt?: string) => {
+    const video = videoRef.current;
+    if (!scannerRef.current) return;
+
+    // Futuristic audio feedback on scan trigger
+    try {
+      const AudioCtx = window.AudioContext || (window as any).webkitAudioContext;
+      if (AudioCtx) {
+        const ctx = new AudioCtx();
+        const osc = ctx.createOscillator();
+        const gain = ctx.createGain();
+        osc.connect(gain);
+        gain.connect(ctx.destination);
+        osc.type = "sawtooth";
+        osc.frequency.setValueAtTime(440, ctx.currentTime);
+        osc.frequency.linearRampToValueAtTime(880, ctx.currentTime + 0.15);
+        gain.gain.setValueAtTime(0.12, ctx.currentTime);
+        gain.gain.exponentialRampToValueAtTime(0.01, ctx.currentTime + 0.2);
+        osc.start(ctx.currentTime);
+        osc.stop(ctx.currentTime + 0.2);
+      }
+    } catch {}
+
+    let result: ScanResult | null = null;
+
+    if (camera === "on" && video && video.srcObject) {
+      result = await scannerRef.current.scan(video, customPrompt);
+    } else {
+      result = await scannerRef.current.scanFromNewStream(customPrompt);
+    }
+
+    if (result) {
+      setResponse(result.analysis);
+      setChatLog((prev) => [...prev.slice(-50), { role: "jarvis", text: result!.analysis }]);
+      voiceRef.current?.speak(result.analysis);
+    }
+  }, [camera]);
+
+  // Initialize scanner
+  useEffect(() => {
+    const scanner = new ObjectScanner({
+      onStateChange: setScanState,
+      onResult: (result) => {
+        setScanResult(result);
+      },
+      onError: (err) => {
+        setError(`SCAN FAILED: ${err}`);
+        // Auto-clear error after 5 seconds
+        setTimeout(() => setError(null), 5000);
+      },
+    });
+    scannerRef.current = scanner;
+    return () => { scannerRef.current = null; };
+  }, []);
+
   // ——— Voice engine init ———
   useEffect(() => {
     const engine = new VoiceEngine({
@@ -303,6 +365,10 @@ export default function JarvisOrb() {
         if (data && data.browserTarget) {
             setBrowserTarget(data.browserTarget);
         }
+
+        if (data && data.scanRequested) {
+            triggerScan(data.scanPrompt);
+        }
       },
       onError: (err) => setError(err),
       onSpeakingLevel: (level) => {
@@ -340,6 +406,11 @@ export default function JarvisOrb() {
             osc.stop(ctx.currentTime + 0.3);
           }
         } catch(e) {}
+      },
+      onScanRequested: () => {
+        // Voice detected a scan command — trigger the object scanner
+        setChatLog((prev) => [...prev.slice(-50), { role: "user", text: "Scan this object" }]);
+        triggerScan();
       },
     });
     voiceRef.current = engine;
@@ -592,6 +663,12 @@ export default function JarvisOrb() {
         case "s":
         case "S":
           toggleSystem();
+          break;
+        case "c":
+        case "C":
+        case "v":
+        case "V":
+          triggerScan();
           break;
         case " ":
           e.preventDefault();
@@ -1003,6 +1080,14 @@ export default function JarvisOrb() {
           >
             {camera === "starting" ? "INITIALIZING…" : cameraOn ? "GESTURES ON" : "GESTURES OFF"}
           </button>
+          <button
+            type="button"
+            className={`hud-btn${scanState === "analyzing" ? " scanning" : ""}`}
+            onClick={() => triggerScan()}
+            disabled={scanState === "analyzing" || scanState === "capturing"}
+          >
+            {scanState === "capturing" ? "CAPTURING…" : scanState === "analyzing" ? "SCANNING…" : "SCAN OBJECT"}
+          </button>
         </div>
         <div className="hud-row">
           <button
@@ -1049,6 +1134,142 @@ export default function JarvisOrb() {
           </button>
         </div>
       </div>
+      )}
+
+      {/* Object Scanner overlay */}
+      {(scanState === "capturing" || scanState === "analyzing") && (
+        <div className="hud scan-overlay-active">
+          <div className="scan-reticle">
+            <div className="scan-corner tl" />
+            <div className="scan-corner tr" />
+            <div className="scan-corner bl" />
+            <div className="scan-corner br" />
+            <div className="scan-line" />
+          </div>
+          <div className="scan-label">
+            {scanState === "capturing" ? "CAPTURING FRAME…" : "ANALYZING OBJECT…"}
+          </div>
+        </div>
+      )}
+
+      {/* Scan result display */}
+      {scanResult && scanState === "done" && (
+        <div className="hud scan-result-panel">
+          <div className="scan-result-header">
+            <div className="scan-header-left">
+              <span className="scan-hud-tag">OPTICAL SENSORY INTEL</span>
+              <span className="scan-result-title">{scanResult.data?.title || "IDENTIFIED OBJECT"}</span>
+            </div>
+            <button 
+              className="scan-result-close"
+              onClick={() => { setScanResult(null); scannerRef.current?.reset(); }}
+              title="Close Scan Intel"
+            >
+              ✕
+            </button>
+          </div>
+
+          <div className="scan-content-scroll">
+            {/* Top row: thumbnail + quick stats badges */}
+            <div className="scan-top-grid">
+              {scanResult.capturedImage && (
+                <div className="scan-thumb-container">
+                  {/* eslint-disable-next-line @next/next/no-img-element */}
+                  <img src={scanResult.capturedImage} alt="Scanned Object" className="scan-thumb" />
+                  <div className="scan-thumb-scanlines" />
+                </div>
+              )}
+              <div className="scan-badges-grid">
+                {scanResult.data?.brand && (
+                  <div className="scan-badge-item">
+                    <span className="scan-badge-k">BRAND</span>
+                    <span className="scan-badge-v highlight">{scanResult.data.brand}</span>
+                  </div>
+                )}
+                {scanResult.data?.category && (
+                  <div className="scan-badge-item">
+                    <span className="scan-badge-k">CATEGORY</span>
+                    <span className="scan-badge-v">{scanResult.data.category}</span>
+                  </div>
+                )}
+                {scanResult.data?.size && (
+                  <div className="scan-badge-item">
+                    <span className="scan-badge-k">EST. SIZE</span>
+                    <span className="scan-badge-v">{scanResult.data.size}</span>
+                  </div>
+                )}
+                {scanResult.data?.estimatedPrice && (
+                  <div className="scan-badge-item">
+                    <span className="scan-badge-k">EST. VALUE</span>
+                    <span className="scan-badge-v price">{scanResult.data.estimatedPrice}</span>
+                  </div>
+                )}
+              </div>
+            </div>
+
+            {/* Verdict & Better Choice */}
+            {(scanResult.data?.betterChoice || scanResult.data?.qualityVerdict) && (
+              <div className="scan-section verdict-box">
+                <div className="scan-section-title">EVALUATION & CHOICE VERDICT</div>
+                {scanResult.data?.betterChoice && (
+                  <div className="scan-choice-verdict">{scanResult.data.betterChoice}</div>
+                )}
+                {scanResult.data?.qualityVerdict && (
+                  <div className="scan-verdict-body">{scanResult.data.qualityVerdict}</div>
+                )}
+              </div>
+            )}
+
+            {/* Better Alternatives */}
+            {scanResult.data?.betterAlternatives && scanResult.data.betterAlternatives.length > 0 && (
+              <div className="scan-section">
+                <div className="scan-section-title">SUPERIOR / ALTERNATIVE CHOICES</div>
+                <div className="scan-alternatives-list">
+                  {scanResult.data.betterAlternatives.map((alt, i) => (
+                    <div key={i} className="scan-alt-item">
+                      <span className="scan-alt-arrow">❯</span>
+                      <span className="scan-alt-text">{alt}</span>
+                    </div>
+                  ))}
+                </div>
+              </div>
+            )}
+
+            {/* Key Specs / Details */}
+            {scanResult.data?.keyDetails && scanResult.data.keyDetails.length > 0 && (
+              <div className="scan-section">
+                <div className="scan-section-title">SPECIFICATIONS & OBSERVATIONS</div>
+                <div className="scan-details-grid">
+                  {scanResult.data.keyDetails.map((det, i) => (
+                    <div key={i} className="scan-detail-chip">
+                      <span className="scan-dot" />
+                      <span>{det}</span>
+                    </div>
+                  ))}
+                </div>
+              </div>
+            )}
+
+            {/* Fun Fact */}
+            {scanResult.data?.funFact && (
+              <div className="scan-section fun-fact-box">
+                <div className="scan-section-title">INTEL BRIEFING</div>
+                <div className="scan-fun-fact">{scanResult.data.funFact}</div>
+              </div>
+            )}
+
+            {/* Spoken Narration text */}
+            <div className="scan-narration">
+              <span className="scan-narration-label">JARVIS AUDIO LOG:</span>
+              <p>{scanResult.analysis}</p>
+            </div>
+          </div>
+
+          <div className="scan-result-footer">
+            <span>NEURAL SCAN ENGINE: {scanResult.model.toUpperCase()}</span>
+            <span>{new Date(scanResult.timestamp).toLocaleTimeString()}</span>
+          </div>
+        </div>
       )}
     </>
   );

@@ -10,6 +10,7 @@ export interface VoiceCallbacks {
   onSpeakingLevel: (level: number) => void;
   onListeningLevel?: (level: number) => void;
   onWakeWordDetected: () => void;
+  onScanRequested?: () => void;
 }
 
 export class VoiceEngine {
@@ -72,9 +73,34 @@ export class VoiceEngine {
                return;
             }
 
-            this.callbacks.onTranscript(fullTranscript.trim(), false);
-            this.lastSpeechTime = Date.now();
-            this.hasSpokenInCurrentRecording = true;
+             // Detect scan/identify voice commands and trigger the object scanner
+             const scanPatterns = [
+               /\bscan\s*(this|that|it|object|item|product)?\b/i,
+               /\bwhat\s*(is|are)\s*(this|that)\b/i,
+               /\bidentify\s*(this|that|it)?\b/i,
+               /\brecognize\s*(this|that|it)?\b/i,
+               /\btell me about\s*(this|that)\b/i,
+               /\bwhat('s| is)\s*(this|that)\s*(thing|item|product|object)?\b/i,
+               /\banalyse\s*(this|that|it)?\b/i,
+               /\banalyze\s*(this|that|it)?\b/i,
+               /\bwhat\s*am\s*i\s*holding\b/i,
+               /\bwhat\s*(do )?i\s*have\s*(here|in my hand)?\b/i,
+             ];
+             if (scanPatterns.some(rx => rx.test(trimmed))) {
+               this.hasSpokenInCurrentRecording = false;
+               this.callbacks.onTranscript(fullTranscript.trim(), true);
+               this.stopRecording();
+               if (this.callbacks.onScanRequested) {
+                 this.callbacks.onScanRequested();
+               }
+               return;
+             }
+
+            if (trimmed.length > 1) {
+              this.callbacks.onTranscript(fullTranscript.trim(), false);
+              this.lastSpeechTime = Date.now();
+              this.hasSpokenInCurrentRecording = true;
+            }
           }
         };
 
@@ -95,6 +121,10 @@ export class VoiceEngine {
         };
         
         this.recognition.onerror = (event: any) => {
+            if (event.error === 'no-speech') {
+                // Expected browser event during silence — ignore quietly
+                return;
+            }
             console.warn("Speech recognition error:", event.error);
             if (event.error === 'not-allowed' || event.error === 'audio-capture') {
                 this.shouldBeWakeListening = false;
@@ -172,7 +202,9 @@ export class VoiceEngine {
   async startRecording(autoStop = false, noSpeechTimeoutMs = 5000): Promise<void> {
     this.stopWakeListening();
     
-    if (this._state === "speaking") {
+    // Only flag an interruption if the browser was ACTUALLY actively speaking audio
+    const isActivelySpeaking = typeof window !== "undefined" && window.speechSynthesis && window.speechSynthesis.speaking;
+    if (this._state === "speaking" && isActivelySpeaking) {
       this.wasInterrupted = true;
       if (this.audioEl) {
         this.audioEl.pause();
@@ -181,6 +213,8 @@ export class VoiceEngine {
         window.speechSynthesis.cancel();
       }
       cancelAnimationFrame(this.speakingRaf);
+    } else {
+      this.wasInterrupted = false;
     }
 
     if (this.mediaRecorder && this.mediaRecorder.state === "recording") {
@@ -250,11 +284,15 @@ export class VoiceEngine {
     
     const dataArray = new Uint8Array(this.silenceAnalyser.frequencyBinCount);
     const startTime = Date.now();
-    let lastSpokeTime = Date.now();
     let hasSpoken = false;
-    let noiseFloor = 40; // base floor
+    let noiseFloor = 60; // raised base floor (was 40)
     let frames = 0;
     let sumMax = 0;
+    let consecutiveSpeechFrames = 0; // hysteresis: require multiple frames above threshold
+    const SPEECH_FRAME_THRESHOLD = 4; // need 4+ consecutive frames (~60ms) to confirm speech
+    const SILENCE_AFTER_SPEECH_MS = 3000; // wait 3s of silence before stopping (was 1.5s)
+    const HARD_LIMIT_MS = 30000; // 30s hard cap (was 15s)
+    const ECHO_GUARD_MS = 800; // wait 800ms before speech detection to avoid TTS echo (was 500ms)
 
     const checkSilence = () => {
        if (this._state !== "listening") return;
@@ -271,20 +309,24 @@ export class VoiceEngine {
            sumMax += maxLevel;
            frames++;
            if (frames === 20) {
-               // dynamically calculate noise floor from first ~300ms + much higher margin
-               noiseFloor = Math.max(50, (sumMax / 20) + 40); 
+               // dynamically calculate noise floor from first ~300ms with higher margin
+               noiseFloor = Math.max(80, (sumMax / 20) + 60); // raised min to 80, margin to +60 (was 50/+40)
            }
-       } else if (elapsed > 500) { // wait 500ms before allowing speech detection to avoid TTS echo
-           if (maxLevel > noiseFloor) { 
-               // If live transcription is active, we rely on it to keep lastSpeechTime updated.
-               // We only use volume to set the initial hasSpoken flag or if recognition isn't supported.
-               if (!this.recognition) {
-                   this.lastSpeechTime = Date.now();
-               } else if (!hasSpoken) {
-                   this.lastSpeechTime = Date.now();
+       } else if (elapsed > ECHO_GUARD_MS) {
+           if (maxLevel > noiseFloor) {
+               consecutiveSpeechFrames++;
+               // Always update lastSpeechTime when volume is above noise floor,
+               // even when Web Speech API recognition is active.
+               // This prevents premature cutoff during natural pauses between words.
+               this.lastSpeechTime = Date.now();
+               
+               // Only mark as "spoken" after sustained speech (hysteresis)
+               if (consecutiveSpeechFrames >= SPEECH_FRAME_THRESHOLD) {
+                   hasSpoken = true;
+                   this.hasSpokenInCurrentRecording = true;
                }
-               hasSpoken = true;
-               this.hasSpokenInCurrentRecording = true;
+           } else {
+               consecutiveSpeechFrames = 0; // reset consecutive counter on silence
            }
        }
 
@@ -292,10 +334,10 @@ export class VoiceEngine {
        const silentTime = Date.now() - (this.lastSpeechTime || startTime);
        
        // Stop if:
-       // 1. Spoke, and now silent for 1.5s
+       // 1. Spoke, and now silent for 3s (was 1.5s)
        // 2. Didn't speak, and timeout reached
-       // 3. Hard limit of 15 seconds reached (prevent infinite listening)
-       if ((hasSpoken && silentTime > 1500) || (!hasSpoken && elapsed > noSpeechTimeoutMs) || elapsed > 15000) {
+       // 3. Hard limit of 30s reached (was 15s)
+       if ((hasSpoken && silentTime > SILENCE_AFTER_SPEECH_MS) || (!hasSpoken && elapsed > noSpeechTimeoutMs) || elapsed > HARD_LIMIT_MS) {
            this.stopRecording();
            return;
        }
@@ -441,6 +483,13 @@ export class VoiceEngine {
           reply = reply.replace(expandNewsMatch[0], "").trim();
       }
 
+      const scanMatch = reply.match(/\[UI_CMD:SCAN(?::(.*?))?\]/);
+      if (scanMatch) {
+          data.scanRequested = true;
+          data.scanPrompt = scanMatch[1] || "";
+          reply = reply.replace(scanMatch[0], "").trim();
+      }
+
       this.callbacks.onResponse(reply, data);
       
       // If we are pulling up the news grid, remain silent until the news actually loads.
@@ -458,7 +507,7 @@ export class VoiceEngine {
     }
   }
 
-  private speak(text: string): void {
+  speak(text: string): void {
     if (this.audioEl) {
       this.audioEl.pause();
     }
@@ -469,11 +518,21 @@ export class VoiceEngine {
 
     const utterance = new SpeechSynthesisUtterance(text);
     const voices = window.speechSynthesis.getVoices();
-    const voice = voices.find(v => v.name.includes("UK English Male") || v.name.includes("Google UK English Male") || v.lang === "en-GB");
+    
+    // Select the highest quality natural human voice available in the browser
+    const voice = 
+      voices.find(v => v.name.includes("Online (Natural)") && (v.name.includes("Ryan") || v.name.includes("George") || v.lang.startsWith("en-GB"))) ||
+      voices.find(v => v.name.includes("Ryan") || v.name.includes("George")) ||
+      voices.find(v => v.name.includes("Google UK English Male")) ||
+      voices.find(v => v.lang === "en-GB" && !v.name.includes("Hazel") && !v.name.includes("Susan") && !v.name.includes("Zira")) ||
+      voices.find(v => v.lang.startsWith("en-GB")) ||
+      voices.find(v => v.name.includes("Natural") && v.lang.startsWith("en")) ||
+      voices.find(v => v.lang.startsWith("en"));
+
     if (voice) utterance.voice = voice;
     
-    utterance.rate = 1.0;
-    utterance.pitch = 0.5;
+    utterance.rate = 1.02; // Natural conversational cadence
+    utterance.pitch = 1.0; // Natural, realistic pitch (0.5 was artificially distorted and robotic)
 
     this.speakingTime = 0;
     const pumpSpeaking = () => {
@@ -492,8 +551,10 @@ export class VoiceEngine {
     utterance.onend = () => {
       cancelAnimationFrame(this.speakingRaf);
       this.callbacks.onSpeakingLevel(0);
-      // Automatically start listening for 3 seconds after speaking
-      this.startRecording(true, 3000);
+      this.wasInterrupted = false;
+      this.setState("idle");
+      // Automatically start listening after speaking — give user 5s to begin talking
+      this.startRecording(true, 5000);
     };
 
     utterance.onerror = (e) => {

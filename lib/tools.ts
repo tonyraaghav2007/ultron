@@ -108,37 +108,218 @@ export function toggleMouseMode(enabled: boolean): string {
   return `Mouse mode is now ${enabled ? "ENABLED" : "DISABLED"}.`;
 }
 
-// --- File System Access ---
+// --- File System Access & Laptop Deep Search ---
+import { extractTextFromDocxSync } from "./documentGenerator";
+
+function resolveLocationHint(hint?: string): string[] {
+  const home = os.homedir();
+  const norm = (hint || "").trim().toLowerCase();
+
+  if (norm.includes("desktop")) return [path.join(home, "Desktop")];
+  if (norm.includes("download")) return [path.join(home, "Downloads")];
+  if (norm.includes("document")) return [path.join(home, "Documents")];
+  if (norm.includes("picture")) return [path.join(home, "Pictures")];
+  if (norm.includes("music")) return [path.join(home, "Music")];
+  if (norm.includes("video")) return [path.join(home, "Videos")];
+  if (norm.includes("home") || norm === "user" || norm === "me") return [home];
+  if (norm.includes("workspace") || norm.includes("project")) return [process.cwd()];
+
+  if (hint && fs.existsSync(hint)) {
+    return [hint];
+  }
+
+  // Priority search locations on laptop
+  return [
+    path.join(home, "Desktop"),
+    path.join(home, "Documents"),
+    path.join(home, "Downloads"),
+    process.cwd()
+  ];
+}
+
+interface FoundFile {
+  name: string;
+  path: string;
+  size: number;
+  mtime: Date;
+  isDir: boolean;
+}
+
+function searchFolderRecursive(
+  dir: string,
+  tokens: string[],
+  results: FoundFile[],
+  maxResults: number,
+  depth = 0,
+  maxDepth = 3
+) {
+  if (depth > maxDepth || results.length >= maxResults) return;
+  try {
+    const entries = fs.readdirSync(dir, { withFileTypes: true });
+    for (const entry of entries) {
+      if (results.length >= maxResults) break;
+      if (
+        entry.name.startsWith(".") ||
+        ["node_modules", "AppData", "$Recycle.Bin", "System Volume Information", "Windows", "Program Files", "Program Files (x86)", ".next"].includes(entry.name)
+      ) {
+        continue;
+      }
+      const fullPath = path.join(dir, entry.name);
+      const nameLower = entry.name.toLowerCase();
+
+      // Check if all tokens match or if exact query matches
+      const isMatch = tokens.length === 0 || tokens.every(tok => nameLower.includes(tok));
+      if (isMatch && !entry.isDirectory()) {
+        try {
+          const stats = fs.statSync(fullPath);
+          results.push({
+            name: entry.name,
+            path: fullPath,
+            size: stats.size,
+            mtime: stats.mtime,
+            isDir: false
+          });
+        } catch {}
+      }
+
+      if (entry.isDirectory()) {
+        searchFolderRecursive(fullPath, tokens, results, maxResults, depth + 1, maxDepth);
+      }
+    }
+  } catch {}
+}
+
+export async function findFiles(query: string, locationHint?: string, maxResults = 10): Promise<string> {
+  try {
+    const rawTokens = query.toLowerCase().replace(/[^a-z0-9._\s-]/gi, " ").split(/\s+/).filter(t => t.length > 0);
+    const searchDirs = resolveLocationHint(locationHint);
+    const results: FoundFile[] = [];
+
+    for (const dir of searchDirs) {
+      if (fs.existsSync(dir)) {
+        searchFolderRecursive(dir, rawTokens, results, maxResults, 0, 3);
+        if (results.length >= maxResults) break;
+      }
+    }
+
+    if (results.length === 0) {
+      const searchedIn = searchDirs.map(d => path.basename(d) || d).join(", ");
+      return `No files matching '${query}' were found in: ${searchedIn}.`;
+    }
+
+    let out = `Found ${results.length} matching file(s) on your laptop:\n\n`;
+    for (const file of results) {
+      const sizeKb = (file.size / 1024).toFixed(1);
+      const dateStr = file.mtime.toLocaleDateString("en-US", { month: "short", day: "numeric", year: "numeric", hour: "2-digit", minute: "2-digit" });
+      out += `• ${file.name}\n  Path: ${file.path}\n  Size: ${sizeKb} KB | Last Modified: ${dateStr}\n\n`;
+    }
+    return out.trim();
+  } catch (error: any) {
+    return `File search failed: ${error.message}`;
+  }
+}
+
 export function listDirectory(dirPath: string): string {
   try {
-    const stats = fs.statSync(dirPath);
+    let resolved = dirPath.trim();
+    if (resolved === "desktop" || resolved === "~/desktop") resolved = path.join(os.homedir(), "Desktop");
+    if (resolved === "downloads" || resolved === "~/downloads") resolved = path.join(os.homedir(), "Downloads");
+    if (resolved === "documents" || resolved === "~/documents") resolved = path.join(os.homedir(), "Documents");
+    if (resolved === "~" || resolved === "home") resolved = os.homedir();
+
+    const stats = fs.statSync(resolved);
     if (!stats.isDirectory()) {
-      return `Error: ${dirPath} is not a directory.`;
+      return `Error: ${resolved} is not a directory.`;
     }
-    const files = fs.readdirSync(dirPath, { withFileTypes: true });
+    const files = fs.readdirSync(resolved, { withFileTypes: true });
     const items = files.map((file) => {
       return `${file.isDirectory() ? "[DIR]" : "[FILE]"} ${file.name}`;
     });
-    return `Contents of ${dirPath}:\n` + items.join("\n");
+    return `Contents of ${resolved} (${items.length} items):\n` + items.slice(0, 50).join("\n") + (items.length > 50 ? `\n...and ${items.length - 50} more items` : "");
   } catch (error: any) {
     return `Failed to list directory: ${error.message}`;
   }
 }
 
-export function readFileContent(filePath: string): string {
+export async function readFileContent(target: string): Promise<string> {
   try {
-    const stats = fs.statSync(filePath);
+    let resolvedPath = target.trim();
+
+    // Auto-resolve fuzzy name or relative desktop/documents path if not an existing file
+    if (!fs.existsSync(resolvedPath)) {
+      const searchDirs = resolveLocationHint();
+      let foundPath: string | null = null;
+
+      for (const folder of searchDirs) {
+        const direct = path.join(folder, target);
+        if (fs.existsSync(direct)) {
+          foundPath = direct;
+          break;
+        }
+        for (const ext of [".docx", ".pdf", ".txt", ".md", ".json", ".csv"]) {
+          if (fs.existsSync(direct + ext)) {
+            foundPath = direct + ext;
+            break;
+          }
+        }
+        if (foundPath) break;
+      }
+
+      if (!foundPath) {
+        // Fallback: search files with query
+        const rawTokens = target.toLowerCase().replace(/[^a-z0-9._\s-]/gi, " ").split(/\s+/).filter(t => t.length > 0);
+        const results: FoundFile[] = [];
+        for (const dir of searchDirs) {
+          searchFolderRecursive(dir, rawTokens, results, 1, 0, 3);
+          if (results.length > 0) break;
+        }
+        if (results.length > 0) {
+          foundPath = results[0].path;
+        }
+      }
+
+      if (foundPath) {
+        resolvedPath = foundPath;
+      } else {
+        return `File '${target}' could not be located on your Desktop, Documents, or Downloads.`;
+      }
+    }
+
+    const stats = fs.statSync(resolvedPath);
     if (stats.isDirectory()) {
-      return `Error: ${filePath} is a directory. Use list_directory instead.`;
+      return `Error: ${resolvedPath} is a directory. Use list_directory instead.`;
     }
-    // Limit to 10,000 characters to avoid overwhelming the AI
-    let content = fs.readFileSync(filePath, "utf-8");
-    if (content.length > 10000) {
-      content = content.substring(0, 10000) + "\n\n...[CONTENT TRUNCATED DUE TO LENGTH]...";
+
+    // High fidelity extraction for Word .docx documents
+    if (resolvedPath.endsWith(".docx")) {
+      const text = extractTextFromDocxSync(resolvedPath);
+      if (text) {
+        return `[Extracted content from Word Document: ${path.basename(resolvedPath)}]\nPath: ${resolvedPath}\n\n${text}`;
+      }
     }
-    return content;
+
+    // Text & code files
+    let content = fs.readFileSync(resolvedPath, "utf-8");
+    if (content.length > 12000) {
+      content = content.substring(0, 12000) + "\n\n...[CONTENT TRUNCATED DUE TO LENGTH]...";
+    }
+    return `[Content of ${path.basename(resolvedPath)}]\nPath: ${resolvedPath}\n\n${content}`;
   } catch (error: any) {
     return `Failed to read file: ${error.message}`;
+  }
+}
+
+export function writeFileContent(filePath: string, content: string): string {
+  try {
+    let resolved = filePath.trim();
+    if (!path.isAbsolute(resolved)) {
+      resolved = path.join(os.homedir(), "Desktop", resolved);
+    }
+    fs.mkdirSync(path.dirname(resolved), { recursive: true });
+    fs.writeFileSync(resolved, content, "utf-8");
+    return `Successfully wrote content to: ${resolved}`;
+  } catch (error: any) {
+    return `Failed to write file: ${error.message}`;
   }
 }
 
@@ -504,8 +685,17 @@ export async function buildWebsiteWithAntigravity(specPath: string, outputDirNam
   }
 }
 
-// --- Document Generation ---
-import { createDocument } from "./documentGenerator";
+// --- Document Generation & Management ---
+import {
+  createDocument,
+  editDocument,
+  mergeDocuments,
+  getActiveDocuments,
+  resolveDocument,
+  extractDocumentText,
+  DocumentRecord
+} from "./documentGenerator";
+
 export async function generateDocument(content: string, format: "pdf" | "docx", filename: string): Promise<string> {
     try {
         const dest = await createDocument(content, format, filename);
@@ -513,6 +703,46 @@ export async function generateDocument(content: string, format: "pdf" | "docx", 
     } catch (e: any) {
         return `Failed to generate document: ${e.message}`;
     }
+}
+
+export async function editDocumentTool(
+    targetDocument: string,
+    newContent: string,
+    mode: "replace" | "append" | "prepend" = "replace"
+): Promise<string> {
+    try {
+        const result = await editDocument(targetDocument, newContent, mode);
+        return `${result.summary} Path: ${result.path}`;
+    } catch (e: any) {
+        return `Failed to edit document: ${e.message}`;
+    }
+}
+
+export async function mergeDocumentsTool(
+    documents: string[],
+    outputFilename: string,
+    format: "pdf" | "docx" = "docx"
+): Promise<string> {
+    try {
+        const result = await mergeDocuments(documents, outputFilename, format);
+        return `${result.summary} Path: ${result.path}`;
+    } catch (e: any) {
+        return `Failed to merge documents: ${e.message}`;
+    }
+}
+
+export function getActiveDocumentsSummary(): string {
+    const docs = getActiveDocuments();
+    if (docs.length === 0) return "No documents have been tracked yet in this session.";
+    let summary = `--- RECENT / TRACKED DOCUMENTS (${docs.length}) ---\n`;
+    docs.forEach((d, i) => {
+        const dateStr = new Date(d.updatedAt).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' });
+        summary += `${i + 1}. "${d.filename}" (${d.format.toUpperCase()}) | Path: ${d.filePath} | Modified: ${dateStr}\n`;
+        if (d.content) {
+            summary += `   Snippet: ${d.content.substring(0, 150).replace(/\s+/g, ' ')}...\n`;
+        }
+    });
+    return summary.trim();
 }
 
 // --- Deep Research & Knowledge Base ---
@@ -660,7 +890,7 @@ export async function openPdfInUi(pdfPath: string): Promise<string> {
 }
 
 // --- Fitness Tracker ---
-export { logLift, logBodyweight, getFitnessHistory, markWorkoutPromptCompleted, hasBeenPromptedForWorkoutToday } from "./fitnessMemory";
+export { logLift, logBodyweight, getFitnessHistory, markWorkoutPromptCompleted, hasBeenPromptedForWorkoutToday, hasBeenPromptedInitial, markInitialPromptCompleted } from "./fitnessMemory";
 
 // --- Core Persistent Memory ---
 export { addMemory as saveCoreMemory, searchMemories as searchCoreMemory, getAllMemories as getCoreMemories } from "./memoryDb";

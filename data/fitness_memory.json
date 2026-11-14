@@ -17,6 +17,24 @@
       "weight": "35kg",
       "reps": "35",
       "date": "2026-08-19T10:10:56.623Z"
+    },
+    {
+      "exercise": "Chest",
+      "weight": "?",
+      "reps": "?",
+      "date": "2026-11-06T16:14:10.360Z"
+    },
+    {
+      "exercise": "Flat Barbell Bench Press",
+      "weight": "60kg",
+      "reps": "12",
+      "date": "2026-11-06T17:02:07.445Z"
+    },
+    {
+      "exercise": "Flat Barbell Bench Press",
+      "weight": "60kg",
+      "reps": "12",
+      "date": "2026-11-06T17:02:09.432Z"
     }
   ],
   "bodyweight": [
@@ -24,5 +42,7 @@
       "weight": "64.34kg",
       "date": "2026-08-18T14:02:20.137Z"
     }
-  ]
+  ],
+  "hasBeenInitialPrompted": true,
+  "lastWorkoutPromptTime": "2026-11-06T22:35:00.000Z"
 }

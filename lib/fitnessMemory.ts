@@ -20,6 +20,7 @@ export interface FitnessData {
     lifts: LiftRecord[];
     bodyweight: BodyweightRecord[];
     lastWorkoutPromptTime?: string;
+    hasBeenInitialPrompted?: boolean;
 }
 
 function getMemory(): FitnessData {
@@ -27,13 +28,13 @@ function getMemory(): FitnessData {
         fs.mkdirSync(DATA_DIR, { recursive: true });
     }
     if (!fs.existsSync(FITNESS_FILE)) {
-        return { lifts: [], bodyweight: [] };
+        return { lifts: [], bodyweight: [], hasBeenInitialPrompted: false };
     }
     try {
         const data = fs.readFileSync(FITNESS_FILE, 'utf8');
         return JSON.parse(data);
     } catch (e) {
-        return { lifts: [], bodyweight: [] };
+        return { lifts: [], bodyweight: [], hasBeenInitialPrompted: false };
     }
 }
 
@@ -68,31 +69,31 @@ export function getFitnessHistory(): string {
     return JSON.stringify(data, null, 2);
 }
 
-export function hasBeenPromptedForWorkoutToday(): boolean {
+export function hasBeenPromptedInitial(): boolean {
     const data = getMemory();
-    if (!data.lastWorkoutPromptTime) return false;
-
-    const lastPrompt = new Date(data.lastWorkoutPromptTime);
-    const now = new Date();
-    
-    // We want to check if the last prompt was after 6:00 AM of the *current logical day*.
-    // The logical day starts at 6:00 AM today and ends at 6:00 AM tomorrow.
-    
-    // Create a boundary for 6:00 AM today
-    const sixAMToday = new Date();
-    sixAMToday.setHours(6, 0, 0, 0);
-
-    // If it's currently before 6:00 AM (e.g. 2:00 AM), the logical boundary was actually 6:00 AM *yesterday*.
-    if (now < sixAMToday) {
-        sixAMToday.setDate(sixAMToday.getDate() - 1);
+    if (data.hasBeenInitialPrompted) return true;
+    // If the user already has logged lifts or bodyweight, they are definitely not a first-time user
+    if ((data.lifts && data.lifts.length > 0) || (data.bodyweight && data.bodyweight.length > 0)) {
+        data.hasBeenInitialPrompted = true;
+        saveMemory(data);
+        return true;
     }
+    return false;
+}
 
-    return lastPrompt >= sixAMToday;
+export function hasBeenPromptedForWorkoutToday(): boolean {
+    // If already prompted initially, do not prompt on startup
+    return hasBeenPromptedInitial();
 }
 
 export function markWorkoutPromptCompleted(): string {
     const data = getMemory();
+    data.hasBeenInitialPrompted = true;
     data.lastWorkoutPromptTime = new Date().toISOString();
     saveMemory(data);
-    return "Workout prompt marked as completed for today.";
+    return "Initial workout and diet prompt marked as completed.";
+}
+
+export function markInitialPromptCompleted(): string {
+    return markWorkoutPromptCompleted();
 }

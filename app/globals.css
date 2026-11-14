@@ -1791,3 +1791,427 @@ body {
   opacity: 0.4;
   cursor: not-allowed;
 }
+
+/* ==========================================================================
+   OBJECT SCANNER & COMPUTER VISION HUD
+   ========================================================================== */
+
+/* Active Scanning Reticle Overlay */
+.scan-overlay-active {
+  position: fixed;
+  top: 50%;
+  left: 50%;
+  transform: translate(-50%, -50%);
+  z-index: 90;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 16px;
+  pointer-events: none;
+}
+
+.scan-reticle {
+  position: relative;
+  width: 280px;
+  height: 280px;
+  border: 1px dashed rgba(0, 229, 255, 0.3);
+  box-shadow: 0 0 30px rgba(0, 229, 255, 0.15), inset 0 0 30px rgba(0, 229, 255, 0.1);
+  border-radius: 8px;
+  overflow: hidden;
+}
+
+.scan-corner {
+  position: absolute;
+  width: 20px;
+  height: 20px;
+  border-color: #00e5ff;
+  border-style: solid;
+}
+
+.scan-corner.tl {
+  top: -2px;
+  left: -2px;
+  border-width: 3px 0 0 3px;
+}
+
+.scan-corner.tr {
+  top: -2px;
+  right: -2px;
+  border-width: 3px 3px 0 0;
+}
+
+.scan-corner.bl {
+  bottom: -2px;
+  left: -2px;
+  border-width: 0 0 3px 3px;
+}
+
+.scan-corner.br {
+  bottom: -2px;
+  right: -2px;
+  border-width: 0 3px 3px 0;
+}
+
+.scan-line {
+  position: absolute;
+  top: 0;
+  left: 0;
+  right: 0;
+  height: 3px;
+  background: linear-gradient(90deg, transparent, #00e5ff, #ffffff, #00e5ff, transparent);
+  box-shadow: 0 0 15px #00e5ff, 0 0 30px #00e5ff;
+  animation: scanLaser 1.8s ease-in-out infinite alternate;
+}
+
+@keyframes scanLaser {
+  0% { top: 5%; opacity: 0.8; }
+  50% { opacity: 1; }
+  100% { top: 95%; opacity: 0.8; }
+}
+
+.scan-label {
+  font-family: monospace;
+  font-size: 13px;
+  font-weight: bold;
+  letter-spacing: 0.25em;
+  color: #00e5ff;
+  text-shadow: 0 0 10px rgba(0, 229, 255, 0.8);
+  animation: pulseScanText 1s ease-in-out infinite alternate;
+}
+
+@keyframes pulseScanText {
+  from { opacity: 0.6; }
+  to { opacity: 1; }
+}
+
+/* Button Scanning State */
+.hud-btn.scanning {
+  border-color: #00e5ff !important;
+  color: #00e5ff !important;
+  box-shadow: 0 0 15px rgba(0, 229, 255, 0.4) !important;
+  animation: scanPulseBtn 1s infinite alternate;
+}
+
+@keyframes scanPulseBtn {
+  from { background: rgba(0, 229, 255, 0.1); }
+  to { background: rgba(0, 229, 255, 0.3); }
+}
+
+/* Scan Result Holographic Panel */
+.scan-result-panel {
+  position: fixed;
+  top: 40px;
+  right: 40px;
+  width: 480px;
+  max-width: calc(100vw - 80px);
+  max-height: calc(100vh - 80px);
+  background: rgba(8, 12, 18, 0.88);
+  border: 1px solid rgba(0, 229, 255, 0.4);
+  box-shadow: 0 0 30px rgba(0, 229, 255, 0.2), inset 0 0 20px rgba(0, 229, 255, 0.05);
+  border-radius: 8px;
+  backdrop-filter: blur(16px);
+  z-index: 100;
+  display: flex;
+  flex-direction: column;
+  color: #e0f2fe;
+  font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, monospace;
+  animation: slideInScan 0.3s cubic-bezier(0.16, 1, 0.3, 1);
+  overflow: hidden;
+}
+
+@keyframes slideInScan {
+  from { opacity: 0; transform: translateY(-20px) scale(0.97); }
+  to { opacity: 1; transform: translateY(0) scale(1); }
+}
+
+.scan-result-header {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  padding: 14px 18px;
+  border-bottom: 1px solid rgba(0, 229, 255, 0.2);
+  background: linear-gradient(90deg, rgba(0, 229, 255, 0.08), transparent);
+}
+
+.scan-header-left {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+}
+
+.scan-hud-tag {
+  font-family: monospace;
+  font-size: 9px;
+  letter-spacing: 0.2em;
+  color: #00e5ff;
+  text-transform: uppercase;
+}
+
+.scan-result-title {
+  font-size: 17px;
+  font-weight: 700;
+  color: #ffffff;
+  letter-spacing: 0.04em;
+  text-shadow: 0 0 12px rgba(0, 229, 255, 0.5);
+}
+
+.scan-result-close {
+  background: rgba(255, 255, 255, 0.05);
+  border: 1px solid rgba(255, 255, 255, 0.15);
+  color: #94a3b8;
+  width: 28px;
+  height: 28px;
+  border-radius: 4px;
+  cursor: pointer;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  font-size: 14px;
+  transition: all 0.2s;
+}
+
+.scan-result-close:hover {
+  background: rgba(239, 68, 68, 0.2);
+  border-color: rgba(239, 68, 68, 0.5);
+  color: #fca5a5;
+}
+
+/* Scrollable Container */
+.scan-content-scroll {
+  padding: 16px 18px;
+  overflow-y: auto;
+  max-height: calc(100vh - 180px);
+  display: flex;
+  flex-direction: column;
+  gap: 14px;
+}
+
+.scan-content-scroll::-webkit-scrollbar {
+  width: 4px;
+}
+.scan-content-scroll::-webkit-scrollbar-track {
+  background: rgba(0, 0, 0, 0.2);
+}
+.scan-content-scroll::-webkit-scrollbar-thumb {
+  background: rgba(0, 229, 255, 0.3);
+  border-radius: 2px;
+}
+
+/* Top Thumbnail & Badges Grid */
+.scan-top-grid {
+  display: flex;
+  gap: 14px;
+  align-items: flex-start;
+}
+
+.scan-thumb-container {
+  position: relative;
+  width: 110px;
+  height: 110px;
+  border-radius: 6px;
+  overflow: hidden;
+  border: 1px solid rgba(0, 229, 255, 0.3);
+  flex-shrink: 0;
+  background: #000;
+}
+
+.scan-thumb {
+  width: 100%;
+  height: 100%;
+  object-fit: cover;
+}
+
+.scan-thumb-scanlines {
+  position: absolute;
+  inset: 0;
+  background: repeating-linear-gradient(
+    0deg,
+    rgba(0, 229, 255, 0.05) 0px,
+    rgba(0, 229, 255, 0.05) 1px,
+    transparent 1px,
+    transparent 3px
+  );
+  pointer-events: none;
+}
+
+.scan-badges-grid {
+  display: grid;
+  grid-template-columns: repeat(2, 1fr);
+  gap: 8px;
+  flex: 1;
+}
+
+.scan-badge-item {
+  background: rgba(255, 255, 255, 0.03);
+  border: 1px solid rgba(255, 255, 255, 0.08);
+  border-radius: 4px;
+  padding: 6px 10px;
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+}
+
+.scan-badge-k {
+  font-family: monospace;
+  font-size: 8px;
+  letter-spacing: 0.15em;
+  color: #64748b;
+  text-transform: uppercase;
+}
+
+.scan-badge-v {
+  font-size: 12px;
+  font-weight: 600;
+  color: #e2e8f0;
+}
+
+.scan-badge-v.highlight {
+  color: #38bdf8;
+  font-weight: 700;
+}
+
+.scan-badge-v.price {
+  color: #4ade80;
+  font-weight: 700;
+}
+
+/* Content Sections */
+.scan-section {
+  background: rgba(255, 255, 255, 0.02);
+  border: 1px solid rgba(255, 255, 255, 0.06);
+  border-radius: 6px;
+  padding: 12px 14px;
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+
+.scan-section.verdict-box {
+  background: rgba(0, 229, 255, 0.03);
+  border-color: rgba(0, 229, 255, 0.18);
+}
+
+.scan-section-title {
+  font-family: monospace;
+  font-size: 9px;
+  font-weight: bold;
+  letter-spacing: 0.18em;
+  color: #00e5ff;
+  text-transform: uppercase;
+}
+
+.scan-choice-verdict {
+  font-size: 13px;
+  font-weight: 600;
+  color: #fef08a;
+  line-height: 1.4;
+}
+
+.scan-verdict-body {
+  font-size: 12px;
+  color: #94a3b8;
+  line-height: 1.5;
+}
+
+/* Alternatives List */
+.scan-alternatives-list {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+
+.scan-alt-item {
+  display: flex;
+  align-items: flex-start;
+  gap: 8px;
+  padding: 6px 8px;
+  background: rgba(255, 255, 255, 0.02);
+  border-left: 2px solid #38bdf8;
+  border-radius: 0 4px 4px 0;
+  font-size: 11px;
+}
+
+.scan-alt-arrow {
+  color: #38bdf8;
+  font-size: 10px;
+  margin-top: 1px;
+}
+
+.scan-alt-text {
+  color: #cbd5e1;
+  line-height: 1.4;
+}
+
+/* Details Grid */
+.scan-details-grid {
+  display: flex;
+  flex-direction: column;
+  gap: 5px;
+}
+
+.scan-detail-chip {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  font-size: 11px;
+  color: #cbd5e1;
+  line-height: 1.4;
+}
+
+.scan-dot {
+  width: 4px;
+  height: 4px;
+  border-radius: 50%;
+  background: #00e5ff;
+  box-shadow: 0 0 6px #00e5ff;
+  flex-shrink: 0;
+}
+
+/* Fun fact */
+.scan-section.fun-fact-box {
+  background: rgba(168, 85, 247, 0.04);
+  border-color: rgba(168, 85, 247, 0.2);
+}
+
+.scan-section.fun-fact-box .scan-section-title {
+  color: #c084fc;
+}
+
+.scan-fun-fact {
+  font-size: 11px;
+  color: #e9d5ff;
+  line-height: 1.5;
+  font-style: italic;
+}
+
+/* Narration Paragraph */
+.scan-narration {
+  padding-top: 6px;
+  border-top: 1px dashed rgba(255, 255, 255, 0.1);
+  font-size: 11px;
+  line-height: 1.6;
+  color: #94a3b8;
+}
+
+.scan-narration-label {
+  font-family: monospace;
+  font-size: 9px;
+  letter-spacing: 0.15em;
+  color: #64748b;
+  display: block;
+  margin-bottom: 4px;
+}
+
+/* Footer */
+.scan-result-footer {
+  display: flex;
+  justify-content: space-between;
+  padding: 8px 18px;
+  font-family: monospace;
+  font-size: 8px;
+  letter-spacing: 0.12em;
+  color: #475569;
+  border-top: 1px solid rgba(255, 255, 255, 0.05);
+  background: rgba(0, 0, 0, 0.2);
+}
+

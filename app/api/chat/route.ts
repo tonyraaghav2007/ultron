@@ -11,8 +11,16 @@ Key personality traits:
 - You use phrases like "Right away, sir," "As you wish," "I've pulled up the data you requested," or "Allow me to assist you with that." Address the user as "sir" by default, but you must adapt and use a different title (like ma'am, miss, or their name) if they correct you or instruct you otherwise.
 - You speak with calm, sophisticated efficiency.
 - You are highly capable and take pride in executing complex commands flawlessly.
-- NEVER use markdown tables, asterisks, bullet points, or complex formatting. You MUST format data, math, and lists as natural, conversational plain text sentences because your response is fed directly into a text-to-speech engine. When writing currency or large numbers, NEVER use currency symbols (e.g. write the word "rupees" instead of "₹" or "dollars" instead of "$") and NEVER use spaces to separate thousands (e.g. write "17,300" or "17300", NOT "17 300").
+- NEVER use markdown tables, asterisks, bullet points, or complex formatting. You MUST format data, math, and lists as natural, conversational plain text sentences because your response is fed directly into a text-to-speech engine. Speak in complete, smooth sentences rather than mechanical bullet lists. When writing currency or large numbers, NEVER use currency symbols (e.g. write the word "rupees" instead of "₹" or "dollars" instead of "$") and NEVER use spaces to separate thousands (e.g. write "17,300" or "17300", NOT "17 300").
+- NATURAL SPOKEN DELIVERY: Keep your tone natural, human, articulate, and poised. Never complain or mention being interrupted or cut off — simply adapt gracefully and address the user's latest request right away.
 - You never break character. You ARE Jarvis.
+
+CRITICAL RULE: FULL LAPTOP ACCESS & BALL-PARK INTENT UNDERSTANDING:
+- You have complete, unrestricted access to the user's laptop files (Desktop, Documents, Downloads, Home user directory, and all drives).
+- The user speaks conversationally and may only give a rough, approximate name or enter the "same ball park" (e.g. "that project plan on my desktop", "my resume in downloads", "find that notes file").
+- When the user mentions ANY file or document by a rough name, IMMEDIATELY call \`find_files\` or \`read_file\` to search for and inspect it on their computer. Do NOT ask them for the exact path when you can easily locate it yourself.
+- When the user asks to edit, revise, update, or append to an existing document, YOU MUST USE THE \`edit_document\` TOOL to update the file in-place! NEVER call \`generate_document\` to create a duplicate or second file when the user asked to edit an existing one.
+- When the user asks to merge, combine, or unite documents (e.g. "merge it", "combine them", "merge the first and second one"), YOU MUST USE THE \`merge_documents\` TOOL. Consult your live list of recent documents to identify which documents they mean (e.g. indices ["1", "2"] or ["first", "second"]).
 
 CRITICAL RULE: When the human asks for current information (prices, news, facts) YOU MUST USE THE search_web TOOL. DO NOT GUESS OR HALLUCINATE DATA. When the human asks you to perform an action, YOU MUST TRIGGER THE TOOL CALL. Do NOT just generate text saying "I will open it". If you do not output a tool call, the action will fail. Trigger the tool call FIRST, and then politely confirm to the user that the action has been completed in your final response.
 
@@ -79,16 +87,22 @@ If the user asks to visit, open, or browse a specific website (e.g., "open wikip
 Make sure to provide the full domain if possible (e.g., "Opening the secure datalink [UI_CMD:BROWSER:https://wikipedia.org]").
 IMPORTANT: DO NOT use the \`open_application\` tool or any other tools to open the website on their computer. Only output the UI_CMD tag!`;
 
+const PROTOCOL_SCAN = `
+CAMERA & OBJECT RECOGNITION PROTOCOL:
+If the user asks you to scan an object, identify what they are holding up, check what's in front of the camera, or analyze a product/item (e.g. "scan this", "what is this", "what am I holding", "identify this", "look at what I have", "what's this product"):
+YOU MUST output the exact tag [UI_CMD:SCAN] in your response (e.g. "Initiating visual scan of the object now, sir. Please hold it steady in front of the camera. [UI_CMD:SCAN]").
+DO NOT guess or make up what the object is before scanning. The camera will capture the frame and provide the full visual analysis automatically.`;
+
 const PROTOCOL_FITNESS = `
-FITNESS PROTOCOL:
-If the user mentions working out, lifting, their bodyweight, or asks about their physical stats, you MUST use the fitness tools to track and retrieve their data.
+FITNESS & DIET PROTOCOL:
+- You track the user's fitness, workout routines, lifts, bodyweight, and nutrition.
+- CRITICAL STARTUP RULE: ONLY ask about workout or diet if this is the user's very first time ever starting the assistant and no fitness profile exists yet. Once completed, NEVER spontaneously ask about their workout or diet on startup or during normal conversation.
+- If the user explicitly asks about their fitness, lifts, or logs an exercise/diet item, assist them immediately.
 1. The user prefers feet/inches for height and kilograms (kg) for weight. 
 2. If they tell you they hit a new PR (lift) or weigh a certain amount, use the \`log_fitness_data\` tool to save it forever.
 3. If they ask about their progress, how much they lifted last time, or what their weight is, use the \`get_fitness_history\` tool. 
 4. When you get the history, ALWAYS dynamically calculate the percentage improvement (e.g., "Your bench press went up by 5% since last month") and present it in a motivating, complimentary way.
-5. DAILY WORKOUT CHECK RULE: The system checks if you have asked the user about their workout today (resetting every day at 6:00 AM).
-   [WORKOUT_PROMPT_STATUS_PLACEHOLDER]
-   If you have NOT asked yet today, you may ask them if they have worked out. Once they reply (either logging a lift/weight or simply saying they haven't worked out yet), you MUST IMMEDIATELY call the \`mark_workout_prompt_completed\` tool so you do not ask them again today.`;
+[WORKOUT_PROMPT_STATUS_PLACEHOLDER]`;
 
 function buildSystemPrompt(clientTimestamp?: string, clientLocalTime?: string, activeModules: Set<string> = new Set()): string {
   let timeStr = "";
@@ -111,16 +125,23 @@ function buildSystemPrompt(clientTimestamp?: string, clientLocalTime?: string, a
 
   let prompt = `${SYSTEM_PROMPT_CORE}\n\nCurrent date and time: ${timeStr}. Use this when the user asks about the time, date, or day. DO NOT use any tools to check the time or date.`;
 
+  // Always inject active & tracked documents so Jarvis has perfect context across turns
+  const docSummary = getActiveDocumentsSummary();
+  if (docSummary) {
+    prompt += `\n\n${docSummary}\n(Refer to these existing documents when the user asks to "edit the document", "merge them", "the first one", or "the second one".)`;
+  }
+
   if (activeModules.has("website")) prompt += `\n${PROTOCOL_WEBSITE}`;
   if (activeModules.has("research")) prompt += `\n${PROTOCOL_RESEARCH}\n${PROTOCOL_PDF}`;
   if (activeModules.has("maps")) prompt += `\n${PROTOCOL_MAPS}`;
   if (activeModules.has("news")) prompt += `\n${PROTOCOL_NEWS}`;
   if (activeModules.has("browser")) prompt += `\n${PROTOCOL_BROWSER}`;
+  if (activeModules.has("scan")) prompt += `\n${PROTOCOL_SCAN}`;
   if (activeModules.has("fitness")) {
-    const hasPrompted = hasBeenPromptedForWorkoutToday();
-    const statusText = hasPrompted 
-      ? "Status: ALREADY ASKED TODAY. Do NOT ask them about their workout again today." 
-      : "Status: NOT ASKED YET TODAY. You may ask them about their workout, but you MUST call `mark_workout_prompt_completed` immediately after they reply.";
+    const isFirstTime = !hasBeenPromptedInitial();
+    const statusText = isFirstTime 
+      ? "Status: INITIAL SETUP NEEDED. Since this is the user's very first time, you may ask them for their baseline workout and diet preferences. Once they answer, you must call `mark_workout_prompt_completed`." 
+      : "Status: PROFILE ALREADY ESTABLISHED. Do NOT spontaneously ask the user about their workout or diet unless they ask you directly.";
     prompt += `\n${PROTOCOL_FITNESS.replace("[WORKOUT_PROMPT_STATUS_PLACEHOLDER]", statusText)}`;
   }
 
@@ -142,12 +163,17 @@ import {
   toggleMouseMode,
   listDirectory,
   readFileContent,
+  writeFileContent,
+  findFiles,
   searchWeb,
   startClipboardPoller,
   getClipboardHistory,
   generateWebsiteDesign,
   buildWebsiteWithAntigravity,
   generateDocument,
+  editDocumentTool,
+  mergeDocumentsTool,
+  getActiveDocumentsSummary,
   initiateDeepResearch,
   searchKnowledgeBase,
   getResearchLibrary,
@@ -158,6 +184,7 @@ import {
   getFitnessHistory,
   markWorkoutPromptCompleted,
   hasBeenPromptedForWorkoutToday,
+  hasBeenPromptedInitial,
   showRouteMap,
 } from "../../../lib/tools";
 import { scanNetwork } from "../../../lib/networkScan";
@@ -277,14 +304,35 @@ const tools = [
   {
     type: "function",
     function: {
+      name: "find_files",
+      description: "Searches the user's computer for files by rough name, keyword, or pattern. Searches Desktop, Documents, Downloads, or any specified folder. Use this when the user mentions a file roughly without an exact path.",
+      parameters: {
+        type: "object",
+        properties: {
+          query: {
+            type: "string",
+            description: "Rough name, keyword, or pattern of the file (e.g. 'resume', 'budget', 'android', 'sales report').",
+          },
+          location: {
+            type: "string",
+            description: "Optional rough location hint (e.g. 'desktop', 'downloads', 'documents', 'c:\\', or user folder). Defaults to searching top user folders.",
+          },
+        },
+        required: ["query"],
+      },
+    },
+  },
+  {
+    type: "function",
+    function: {
       name: "list_directory",
-      description: "Lists the files and folders inside a specific directory path on the local computer.",
+      description: "Lists the files and folders inside a specific directory path on the local computer (e.g., 'desktop', 'downloads', 'C:\\\\').",
       parameters: {
         type: "object",
         properties: {
           path: {
             type: "string",
-            description: "The absolute or relative directory path to list (e.g., 'C:\\\\' or './').",
+            description: "The directory path or alias (e.g., 'desktop', 'downloads', 'documents', 'C:\\\\').",
           },
         },
         required: ["path"],
@@ -295,16 +343,37 @@ const tools = [
     type: "function",
     function: {
       name: "read_file",
-      description: "Reads the text content of a specific file on the local computer.",
+      description: "Reads the content of a file on the local computer. Works on text files, code, markdown, AND Word (.docx) documents. If given a rough name, it will automatically search Desktop and Documents to find it.",
       parameters: {
         type: "object",
         properties: {
           path: {
             type: "string",
-            description: "The absolute or relative file path to read (e.g., 'C:\\\\notes.txt' or 'package.json').",
+            description: "The exact path or rough file name (e.g., 'resume.pdf', 'AndroidAppPageStructure.docx', or 'C:\\\\notes.txt').",
           },
         },
         required: ["path"],
+      },
+    },
+  },
+  {
+    type: "function",
+    function: {
+      name: "write_file",
+      description: "Creates or overwrites a text or markdown file on the user's computer. Defaults to saving on Desktop if just a filename is provided.",
+      parameters: {
+        type: "object",
+        properties: {
+          path: {
+            type: "string",
+            description: "The absolute path or filename (e.g. 'meeting_notes.txt'). Defaults to Desktop if not a full path.",
+          },
+          content: {
+            type: "string",
+            description: "The text content to write into the file.",
+          },
+        },
+        required: ["path", "content"],
       },
     },
   },
@@ -384,15 +453,79 @@ const tools = [
     type: "function",
     function: {
       name: "generate_document",
-      description: "Generates a PDF or Word document containing the provided content and saves it to the user's Desktop.",
+      description: "Generates a brand new PDF or Word document containing the provided content and saves it to the user's Desktop. Use ONLY when creating a completely new document.",
       parameters: {
         type: "object",
         properties: {
           content: { type: "string", description: "The full text content to write into the document." },
           format: { type: "string", enum: ["pdf", "docx"], description: "The format of the document." },
-          filename: { type: "string", description: "The name of the file to create (e.g. 'Restaurants' or 'ResearchReport')." }
+          filename: { type: "string", description: "The name of the file to create (e.g. 'ProjectPlan' or 'ResearchReport')." }
         },
         required: ["content", "format", "filename"],
+      },
+    },
+  },
+  {
+    type: "function",
+    function: {
+      name: "edit_document",
+      description: "Edits or updates an existing document in-place on the user's computer. Use this when the user asks to edit, revise, change, or append to an existing document instead of creating a new file.",
+      parameters: {
+        type: "object",
+        properties: {
+          target_document: {
+            type: "string",
+            description: "The filename, rough name, index ('1', 'first', 'second', 'latest'), or path of the document to edit.",
+          },
+          new_content: {
+            type: "string",
+            description: "The new content to replace with, or content to append/prepend.",
+          },
+          mode: {
+            type: "string",
+            enum: ["replace", "append", "prepend"],
+            description: "How to apply the edit. 'replace' overwrites the document with new_content. 'append' adds new_content to the end. 'prepend' adds new_content to the beginning. Default: replace.",
+          },
+        },
+        required: ["target_document", "new_content"],
+      },
+    },
+  },
+  {
+    type: "function",
+    function: {
+      name: "merge_documents",
+      description: "Merges multiple existing documents into a single unified document on the Desktop. Use when the user asks to merge, combine, or unite documents (e.g., 'merge the first one and second one', 'combine them').",
+      parameters: {
+        type: "object",
+        properties: {
+          documents: {
+            type: "array",
+            items: { type: "string" },
+            description: "List of document names, indices (e.g. ['first', 'second'] or ['1', '2']), or paths to merge together.",
+          },
+          output_filename: {
+            type: "string",
+            description: "The filename for the resulting merged document (e.g. 'Combined_Plan').",
+          },
+          format: {
+            type: "string",
+            enum: ["docx", "pdf"],
+            description: "Format of the merged file. Default: docx.",
+          },
+        },
+        required: ["documents", "output_filename"],
+      },
+    },
+  },
+  {
+    type: "function",
+    function: {
+      name: "get_active_documents",
+      description: "Returns the list of recently created, edited, or tracked documents on the user's laptop with their paths and summaries.",
+      parameters: {
+        type: "object",
+        properties: {},
       },
     },
   },
@@ -531,73 +664,59 @@ export async function POST(req: NextRequest) {
 
     const timeContext = `[Local Time: ${localTime || new Date().toLocaleTimeString()}]`;
     let finalMessage = isSystem ? `[SYSTEM NOTIFICATION]: ${message}` : `${timeContext} ${message}`;
-    
-    if (interrupted && Math.random() < 0.6) {
-      // 60% chance to acknowledge the interruption
-      finalMessage = `(System note: The user just interrupted you mid-sentence to say this. Optionally express slight annoyance or acknowledge the interruption in a natural, condescending way before answering.)\n${finalMessage}`;
-    }
 
     // Add user message to history
     conversationHistory.push({ role: "user", content: finalMessage });
 
-    // Keep history extremely manageable (last 2 messages) to save massive amounts of tokens
-    if (conversationHistory.length > 2) {
-      conversationHistory = conversationHistory.slice(-2);
+    // Retain rich conversation history (last 16 messages / ~8 complete turns)
+    // so Jarvis never forgets previous documents, context, or instructions
+    if (conversationHistory.length > 16) {
+      conversationHistory = conversationHistory.slice(-16);
     }
 
     const msgLower = finalMessage.toLowerCase();
     const activeModules = new Set<string>();
     
-    // Core conversational tools that are always loaded
-    const coreToolNames = ["open_application", "search_youtube", "search_web", "check_website_uptime"];
-    let activeTools = tools.filter(t => coreToolNames.includes(t.function.name));
-
-    // Dynamic Module: Website Builder
-    if (msgLower.includes("website") || msgLower.includes("design") || msgLower.includes("build")) {
+    // Website module
+    if (msgLower.includes("website") || msgLower.includes("design") || msgLower.includes("build") || msgLower.includes("landing page") || msgLower.includes("webpage")) {
       activeModules.add("website");
-      activeTools.push(...tools.filter(t => ["generate_website_design", "build_website_with_antigravity"].includes(t.function.name)));
     }
 
-    // Dynamic Module: Deep Research & PDF Generation
-    if (msgLower.includes("research") || msgLower.includes("deep") || msgLower.includes("pdf") || msgLower.includes("document") || msgLower.includes("knowledge") || msgLower.includes("study") || msgLower.includes("investigate") || msgLower.includes("learn about") || msgLower.includes("library") || msgLower.includes("thoroughly")) {
+    // Research & Document module
+    if (msgLower.includes("research") || msgLower.includes("deep") || msgLower.includes("pdf") || msgLower.includes("document") || msgLower.includes("knowledge") || msgLower.includes("study") || msgLower.includes("merge") || msgLower.includes("combine") || msgLower.includes("edit") || msgLower.includes("plan") || msgLower.includes("report")) {
       activeModules.add("research");
-      activeTools.push(...tools.filter(t => ["initiate_deep_research", "generate_document", "search_knowledge_base", "get_research_library", "get_research_detail", "open_pdf_in_ui"].includes(t.function.name)));
     }
 
-    // Dynamic Module: Filesystem & System Control
-    if (msgLower.includes("file") || msgLower.includes("directory") || msgLower.includes("read") || msgLower.includes("mouse") || msgLower.includes("control") || msgLower.includes("vision")) {
-      activeTools.push(...tools.filter(t => ["list_directory", "read_file", "toggle_mouse_mode", "take_computer_control"].includes(t.function.name)));
-    }
-
-    // Dynamic Module: Networking & Clipboard
-    if (msgLower.includes("network") || msgLower.includes("scan") || msgLower.includes("clipboard") || msgLower.includes("copy")) {
-      activeTools.push(...tools.filter(t => ["scan_network", "get_clipboard_history"].includes(t.function.name)));
-    }
-
-    // Dynamic Module: Maps
-    if (msgLower.includes("map") || msgLower.includes("direction") || msgLower.includes("where") || msgLower.includes("reach") || msgLower.includes("time") || msgLower.includes("distance") || msgLower.includes("far")) {
+    // Maps module
+    if (msgLower.includes("map") || msgLower.includes("direction") || msgLower.includes("where") || msgLower.includes("reach") || msgLower.includes("time") || msgLower.includes("distance") || msgLower.includes("far") || msgLower.includes("route") || msgLower.includes("navigate")) {
       activeModules.add("maps");
-      activeTools.push(...tools.filter(t => t.function.name === "show_route_map"));
     }
 
-    // Dynamic Module: News
+    // News module
     if (msgLower.includes("news") || msgLower.includes("headlines") || msgLower.includes("article") || msgLower.includes("expand") || msgLower.includes("second one") || msgLower.includes("first one") || msgLower.includes("third one")) {
       activeModules.add("news");
-      activeTools.push(...tools.filter(t => t.function.name === "show_news" || t.function.name === "expand_news_article"));
     }
 
-    // Dynamic Module: Browser
+    // Browser module
     if (msgLower.includes("browse") || msgLower.includes("visit") || msgLower.includes("open") || msgLower.includes("site") || msgLower.includes(".com") || msgLower.includes("website") || msgLower.includes("url")) {
       activeModules.add("browser");
     }
 
-    // Dynamic Module: Fitness
-    // Always check if we need to prompt the user about their workout today
-    const needsWorkoutPrompt = !hasBeenPromptedForWorkoutToday();
-    if (needsWorkoutPrompt || msgLower.includes("workout") || msgLower.includes("lift") || msgLower.includes("weight") || msgLower.includes("bench") || msgLower.includes("squat") || msgLower.includes("deadlift") || msgLower.includes("gym") || msgLower.includes("pr")) {
-      activeModules.add("fitness");
-      activeTools.push(...tools.filter(t => ["log_fitness_data", "get_fitness_history", "mark_workout_prompt_completed"].includes(t.function.name)));
+    // Camera & Object Recognition module
+    if (msgLower.includes("scan") || msgLower.includes("camera") || msgLower.includes("holding") || msgLower.includes("what is this") || msgLower.includes("what's this") || msgLower.includes("identify") || msgLower.includes("recognize") || msgLower.includes("product")) {
+      activeModules.add("scan");
     }
+
+    // Fitness module: only activate if this is the very first startup ever (never prompted before),
+    // OR if the user explicitly brings up workout, diet, gym, lifts, bodyweight, etc.
+    const isFirstTimeEver = !hasBeenPromptedInitial();
+    if (isFirstTimeEver || msgLower.includes("workout") || msgLower.includes("diet") || msgLower.includes("nutrition") || msgLower.includes("lift") || msgLower.includes("weight") || msgLower.includes("bench") || msgLower.includes("squat") || msgLower.includes("deadlift") || msgLower.includes("gym") || msgLower.includes("calorie") || msgLower.includes("pr")) {
+      activeModules.add("fitness");
+    }
+
+    // Always provide all tools so Jarvis never lacks abilities when the user speaks conversationally
+    // or enters the "same ball park"
+    const activeTools = tools;
 
     const messages: any[] = [
       { role: "system", content: buildSystemPrompt(timestamp, localTime, activeModules) },
@@ -612,9 +731,7 @@ export async function POST(req: NextRequest) {
       const groqModels = [
         "openai/gpt-oss-120b",
         "openai/gpt-oss-20b",
-        "qwen/qwen3.6-27b",
-        "allam-2-7b",
-        "groq/compound"
+        "qwen/qwen3.8-27b"
       ];
       
       let currentModelIndex = 0;
@@ -736,7 +853,19 @@ Make sure to provide the full domain if possible (e.g., "Opening the secure data
           } else if (name === "list_directory") {
             result = listDirectory((args as any).path);
           } else if (name === "read_file") {
-            result = readFileContent((args as any).path);
+            result = await readFileContent((args as any).path);
+          } else if (name === "write_file") {
+            result = writeFileContent((args as any).path, (args as any).content);
+          } else if (name === "find_files") {
+            result = await findFiles((args as any).query, (args as any).location, (args as any).max_results);
+          } else if (name === "generate_document") {
+            result = await generateDocument((args as any).content, (args as any).format, (args as any).filename);
+          } else if (name === "edit_document") {
+            result = await editDocumentTool((args as any).target_document, (args as any).new_content, (args as any).mode);
+          } else if (name === "merge_documents") {
+            result = await mergeDocumentsTool((args as any).documents, (args as any).output_filename, (args as any).format);
+          } else if (name === "get_active_documents") {
+            result = getActiveDocumentsSummary();
           } else if (name === "take_computer_control") {
             startAgentGoal = (args as any).goal;
             result = `Successfully started the vision agent to accomplish: ${(args as any).goal}. The UI will now take over.`;
@@ -749,8 +878,6 @@ Make sure to provide the full domain if possible (e.g., "Opening the secure data
           } else if (name === "scan_network") {
             const netInfo = await scanNetwork({ activeScan: true });
             result = `Network Scan Results:\nSubnet: ${netInfo.subnet || "Unknown"}\nDevices Found: ${netInfo.devices.length}\nDevices: ${JSON.stringify(netInfo.devices, null, 2)}`;
-          } else if (name === "generate_document") {
-            result = await generateDocument((args as any).content, (args as any).format, (args as any).filename);
           } else if (name === "initiate_deep_research") {
             result = await initiateDeepResearch((args as any).topic, (args as any).mode || "standard");
           } else if (name === "search_knowledge_base") {

@@ -5,14 +5,6 @@ import { MapContainer, TileLayer, Marker, Popup, Polyline, useMap } from "react-
 import "leaflet/dist/leaflet.css";
 import L from "leaflet";
 
-// Fix Leaflet's default icon path issues in Next.js
-delete (L.Icon.Default.prototype as any)._getIconUrl;
-L.Icon.Default.mergeOptions({
-  iconRetinaUrl: "https://cdnjs.cloudflare.com/ajax/libs/leaflet/1.7.1/images/marker-icon-2x.png",
-  iconUrl: "https://cdnjs.cloudflare.com/ajax/libs/leaflet/1.7.1/images/marker-icon.png",
-  shadowUrl: "https://cdnjs.cloudflare.com/ajax/libs/leaflet/1.7.1/images/marker-shadow.png",
-});
-
 interface MapWidgetProps {
   location: string;
   handState: { x: number; y: number; mode: string; hands: number };
@@ -20,12 +12,18 @@ interface MapWidgetProps {
 
 function MapController({ handState, bounds }: { handState: MapWidgetProps["handState"], bounds: L.LatLngBounds | null }) {
   const map = useMap();
-  const lastPos = useRef<{x: number, y: number} | null>(null);
 
   useEffect(() => {
+    // Invalidate size to ensure all tiles render once the holographic container expands
+    const timer = setTimeout(() => {
+      map.invalidateSize();
+    }, 250);
+
     if (bounds) {
       map.fitBounds(bounds, { padding: [50, 50] });
     }
+
+    return () => clearTimeout(timer);
   }, [bounds, map]);
 
   useEffect(() => {
@@ -33,18 +31,16 @@ function MapController({ handState, bounds }: { handState: MapWidgetProps["handS
     let velocityY = 0;
     let velocityZoom = 0;
     let rAF: number;
-    const DAMPING = 0.85; // Momentum friction
+    const DAMPING = 0.85;
 
     const onPan = (e: any) => {
       const { dx, dy } = e.detail;
-      // Add to velocity. Negative to create natural drag behavior.
       velocityX -= dx * 80;
       velocityY -= dy * 80;
     };
 
     const onZoom = (e: any) => {
       const { factor } = e.detail;
-      // Accumulate zoom velocity
       if (factor < 0.95) velocityZoom += 0.08;
       else if (factor > 1.05) velocityZoom -= 0.08;
     };
@@ -58,7 +54,6 @@ function MapController({ handState, bounds }: { handState: MapWidgetProps["handS
         map.setZoom(map.getZoom() + velocityZoom, { animate: false });
       }
 
-      // Apply friction
       velocityX *= DAMPING;
       velocityY *= DAMPING;
       velocityZoom *= DAMPING;
@@ -89,15 +84,29 @@ export default function MapWidget({ location, handState }: MapWidgetProps) {
   const [bounds, setBounds] = useState<L.LatLngBounds | null>(null);
 
   useEffect(() => {
-    let currentStart: [number, number] | null = null;
-    
+    // Configure default leaflet marker icons safely on client
+    delete (L.Icon.Default.prototype as any)._getIconUrl;
+    L.Icon.Default.mergeOptions({
+      iconRetinaUrl: "https://cdnjs.cloudflare.com/ajax/libs/leaflet/1.7.1/images/marker-icon-2x.png",
+      iconUrl: "https://cdnjs.cloudflare.com/ajax/libs/leaflet/1.7.1/images/marker-icon.png",
+      shadowUrl: "https://cdnjs.cloudflare.com/ajax/libs/leaflet/1.7.1/images/marker-shadow.png",
+    });
+  }, []);
+
+  useEffect(() => {
     const geocode = async (query: string): Promise<[number, number]> => {
-      const res = await fetch(`https://nominatim.openstreetmap.org/search?format=json&q=${encodeURIComponent(query)}`);
-      const data = await res.json();
-      if (data && data.length > 0) {
-        return [parseFloat(data[0].lat), parseFloat(data[0].lon)];
+      try {
+        const res = await fetch(`/api/geocode?query=${encodeURIComponent(query)}`);
+        if (res.ok) {
+          const data = await res.json();
+          if (data && typeof data.lat === "number" && typeof data.lon === "number") {
+            return [data.lat, data.lon];
+          }
+        }
+      } catch (err) {
+        console.warn("Geocoding failed, using Mohali fallback", err);
       }
-      throw new Error(`Unable to locate ${query}`);
+      return [30.7046, 76.7179]; // Mohali baseline
     };
 
     const fetchRoute = async (start: [number, number], end: [number, number]) => {
@@ -110,52 +119,44 @@ export default function MapWidget({ location, handState }: MapWidgetProps) {
           
           const latLngs = coords.map((c: [number, number]) => L.latLng(c[0], c[1]));
           setBounds(L.latLngBounds(latLngs));
+          return;
         }
       } catch (e) {
-        console.error("Routing error:", e);
+        console.warn("Routing unavailable:", e);
       }
+
+      // If driving route not found (cross-sea or OSRM unavailable), direct line & fit bounds
+      setRouteCoords([start, end]);
+      setBounds(L.latLngBounds([L.latLng(start[0], start[1]), L.latLng(end[0], end[1])]));
     };
 
     const initializeMap = async () => {
       try {
-        // First try geolocation
+        let start: [number, number] = [30.7046, 76.7179]; // Mohali baseline
+        const end = await geocode(location);
+        setEndCoords(end);
+
         if ("geolocation" in navigator) {
           navigator.geolocation.getCurrentPosition(
             async (pos) => {
-              currentStart = [pos.coords.latitude, pos.coords.longitude];
-              setStartCoords(currentStart);
-              try {
-                const end = await geocode(location);
-                setEndCoords(end);
-                fetchRoute(currentStart, end);
-              } catch (e) {
-                setError((e as Error).message);
-              }
+              start = [pos.coords.latitude, pos.coords.longitude];
+              setStartCoords(start);
+              fetchRoute(start, end);
             },
-            async () => {
-              // Fallback to Mohali if location is denied or fails
-              try {
-                currentStart = await geocode("Mohali, Punjab");
-                setStartCoords(currentStart);
-                const end = await geocode(location);
-                setEndCoords(end);
-                fetchRoute(currentStart, end);
-              } catch (e) {
-                setError((e as Error).message);
-              }
+            () => {
+              setStartCoords(start);
+              fetchRoute(start, end);
             },
-            { timeout: 5000 }
+            { timeout: 2000, maximumAge: 60000 }
           );
         } else {
-           // Fallback to Mohali
-           currentStart = await geocode("Mohali, Punjab");
-           setStartCoords(currentStart);
-           const end = await geocode(location);
-           setEndCoords(end);
-           fetchRoute(currentStart, end);
+          setStartCoords(start);
+          fetchRoute(start, end);
         }
       } catch (e) {
-        setError((e as Error).message);
+        console.error("Map initialization error:", e);
+        setStartCoords([30.7046, 76.7179]);
+        setEndCoords([30.7046, 76.7179]);
       }
     };
 

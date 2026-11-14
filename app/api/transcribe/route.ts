@@ -40,7 +40,32 @@ export async function POST(req: Request) {
         }
 
         const data = await response.json();
-        return NextResponse.json({ text: data.text });
+        let rawText = (data.text || "").trim();
+
+        // Common Whisper hallucinations that occur on near-silence/ambient noise
+        const SILENCE_HALLUCINATIONS = [
+            /^thank you\.?$/i,
+            /^thank you very much\.?$/i,
+            /^thanks for watching\.?$/i,
+            /^thanks for watching!$/i,
+            /^you\.?$/i,
+            /^bye\.?$/i,
+            /^so\.?$/i,
+            /^[.\s]+$/,
+            /^\[.*\]$/,
+            /^\(.*\)$/,
+            /^subtitles by/i,
+            /^transcribed by/i,
+            /^amara\.org/i,
+        ];
+
+        const isHallucination = SILENCE_HALLUCINATIONS.some(rx => rx.test(rawText));
+        if (isHallucination) {
+            console.log(`[Whisper] Filtered phantom hallucination on silence: "${rawText}"`);
+            rawText = "";
+        }
+
+        return NextResponse.json({ text: rawText });
 
     } catch (error: any) {
         console.error("Transcription error:", error);
